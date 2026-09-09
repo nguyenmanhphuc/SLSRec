@@ -1,0 +1,236 @@
+import torch
+import numpy as np
+import argparse
+import random
+import sys
+
+# NOTE: these constants are defined *before* the package imports below so that
+# `import config` works standalone -- datasets/base.py imports
+# RAW_DATASET_ROOT_FOLDER from here, which would otherwise be a circular import.
+RAW_DATASET_ROOT_FOLDER = 'data'
+EXPERIMENT_ROOT = 'experiments'
+
+STATE_DICT_KEY = 'model_state_dict'
+OPTIMIZER_STATE_DICT_KEY = 'optimizer_state_dict'
+
+PROJECT_NAME = 'recsys'
+
+from datasets import *
+from model import *
+
+
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    if v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    raise argparse.ArgumentTypeError('boolean value expected, got %r' % v)
+
+
+def set_template(args):
+    user_bert_dropout = args.bert_dropout  # None unless explicitly passed
+    args.min_uc = 5
+    args.min_sc = 5
+    args.split = 'leave_one_out'
+    
+    if args.dataset_code == None:
+        print('******************** Dataset Selection ********************')
+        dataset_code = {'1': 'ml-1m', 'b': 'beauty', 's': 'sports', 't': 'steam', 'v': 'video', 'x': 'xlong'}
+        args.dataset_code = dataset_code[input('Input 1 for ml-1m, b for beauty, s for sports, t for steam, v for video and x for xlong: ')]
+    
+    # Per-dataset defaults, but never override a value the user passed explicitly
+    # (upstream LRURec clobbers --bert_max_len / --val_iterations here).
+    if args.dataset_code == 'ml-1m':
+        max_len, val_iters = 200, 500
+    elif args.dataset_code in ('steam', 'xlong'):
+        max_len, val_iters = (1000, 2000) if args.dataset_code == 'xlong' else (50, 2000)
+    else:  # beauty, sports, video, yelp
+        max_len, val_iters = 50, 1000
+    if args.bert_max_len is None: args.bert_max_len = max_len
+    if args.val_iterations is None: args.val_iterations = val_iters
+    
+    batch = 32 if args.dataset_code == 'xlong' else 128
+    args.train_batch_size = batch
+    args.val_batch_size = batch * 2
+    args.test_batch_size = batch * 2
+
+    if args.model_code is None: args.model_code = 'lru'
+    if torch.cuda.is_available(): args.device = 'cuda'
+    else: args.device = 'cpu'
+    args.optimizer = 'AdamW'
+    if args.lr is None: args.lr = 0.001
+    if args.weight_decay is None: args.weight_decay = 0.01
+    if args.bert_dropout is None: args.bert_dropout = 0.2
+    if args.bert_attn_dropout is None: args.bert_attn_dropout = 0.2
+    if args.bert_mask_prob is None: args.bert_mask_prob = 0.2
+    
+    args.enable_lr_schedule = False
+    args.decay_step = 10000
+    args.gamma = 0.1
+    args.enable_lr_warmup = False
+    args.warmup_steps = 100
+
+    args.metric_ks = [1, 5, 10, 20, 50]
+    args.best_metric = 'Recall@10'
+    args.bert_num_blocks = 2
+    args.bert_num_heads = 2
+    args.bert_head_size = None
+
+    set_slsrec_template(args, user_bert_dropout)
+
+
+def set_slsrec_template(args, user_bert_dropout=None):
+    """Per-dataset SLSRec hyperparameters from the SLSRec paper.
+
+    Dropout: 0.2 for dense datasets (ML-1M), 0.75 for sparse ones (Sec. IV-E1).
+    Perturbation rate theta = 0.1 (Sec. IV-E2, default for all datasets).
+    Uncertainty rate alpha = 0.01 for Beauty, 0.3 for every other dataset
+    (Sec. IV-E3).
+    """
+    if args.model_code != 'slsrec':
+        return
+    if args.uncertainty_alpha is None:
+        args.uncertainty_alpha = 0.01 if args.dataset_code == 'beauty' else 0.3
+    if args.slsrec_dropout is not None:
+        args.bert_dropout = args.slsrec_dropout
+    elif user_bert_dropout is None:
+        args.bert_dropout = 0.75 if args.dataset_code in ('beauty', 'sports') else 0.2
+
+
+parser = argparse.ArgumentParser()
+
+################
+# Dataset
+################
+parser.add_argument('--dataset_code', type=str, default=None)
+parser.add_argument('--min_rating', type=int, default=0)
+parser.add_argument('--min_uc', type=int, default=2)
+parser.add_argument('--min_sc', type=int, default=1)
+parser.add_argument('--split', type=str, default='leave_one_out')
+parser.add_argument('--seed', type=int, default=42)
+
+################
+# Dataloader
+################
+parser.add_argument('--train_batch_size', type=int, default=64)
+parser.add_argument('--val_batch_size', type=int, default=64)
+parser.add_argument('--test_batch_size', type=int, default=64)
+parser.add_argument('--num_workers', type=int, default=8)
+parser.add_argument('--sliding_window_size', type=float, default=1)
+parser.add_argument('--negative_sample_size', type=int, default=100)
+parser.add_argument('--xlong_negative_sample_size', type=int, default=10000)
+
+################
+# Trainer
+################
+# device #
+parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'])
+# optimizer & lr#
+parser.add_argument('--num_epochs', type=int, default=500)
+parser.add_argument('--optimizer', type=str, default='AdamW', choices=['AdamW', 'Adam'])
+parser.add_argument('--weight_decay', type=float, default=None)
+parser.add_argument('--adam_epsilon', type=float, default=1e-9)
+parser.add_argument('--momentum', type=float, default=None)
+parser.add_argument('--lr', type=float, default=0.001)
+parser.add_argument('--max_grad_norm', type=float, default=5.0)
+parser.add_argument('--enable_lr_schedule', type=bool, default=True)
+parser.add_argument('--decay_step', type=int, default=10000)
+parser.add_argument('--gamma', type=float, default=1)
+parser.add_argument('--enable_lr_warmup', type=bool, default=True)
+parser.add_argument('--warmup_steps', type=int, default=100)
+
+# evaluation #
+parser.add_argument('--val_strategy', type=str, default='iteration', choices=['epoch', 'iteration'])
+parser.add_argument('--val_iterations', type=int, default=None)  # only for iteration val_strategy
+parser.add_argument('--val_epochs', type=int, default=1)  # only for epoch val_strategy
+                                                          # (SLSRec paper validates every 5 epochs)
+parser.add_argument('--early_stopping', type=bool, default=True)
+parser.add_argument('--early_stopping_patience', type=int, default=10)
+parser.add_argument('--metric_ks', nargs='+', type=int, default=[1, 5, 10, 20, 50])
+parser.add_argument('--best_metric', type=str, default='Recall@10')
+parser.add_argument('--use_wandb', type=bool, default=False)
+
+################
+# Model
+################
+parser.add_argument('--model_code', type=str, default=None, choices=[None, 'lru', 'slsrec'])
+# BERT specs, used for other models as well #
+parser.add_argument('--bert_max_len', type=int, default=None)
+parser.add_argument('--bert_hidden_units', type=int, default=64)
+parser.add_argument('--bert_num_blocks', type=int, default=2)
+parser.add_argument('--bert_num_heads', type=int, default=2)
+parser.add_argument('--bert_head_size', type=int, default=32)
+parser.add_argument('--bert_dropout', type=float, default=None)
+parser.add_argument('--bert_attn_dropout', type=float, default=None)
+parser.add_argument('--bert_mask_prob', type=float, default=None)
+
+################
+# SLSRec
+################
+# architecture #
+parser.add_argument('--slsrec_expand', type=int, default=2,
+                    help='latent width d = expand * D (paper: d = 2D)')
+parser.add_argument('--slsrec_d_conv', type=int, default=4,
+                    help='causal depth-wise convolution kernel size (RecBLR: 4)')
+parser.add_argument('--slsrec_dropout', type=float, default=None,
+                    help='override the per-dataset SLSRec dropout rate')
+parser.add_argument('--scan_impl', type=str, default='torch',
+                    choices=['torch', 'sequential', 'triton'])
+parser.add_argument('--use_item_bias', type=str2bool, default=False,
+                    help='add a per-item bias to the logits (LRURec does; eq. (15) does not)')
+
+# self-attention gate, eq. (3)/(8) #
+parser.add_argument('--use_sam_gate', type=str2bool, default=True,
+                    help='include the SAM(L1) term in the gate G')
+parser.add_argument('--sam_conv', type=str2bool, default=True,
+                    help='include the Conv1-D1(L1) term in the gate G')
+parser.add_argument('--sam_conv_activation', type=str, default='none', choices=['none', 'silu'])
+parser.add_argument('--sam_num_heads', type=int, default=1,
+                    help='eq. (8) is single-head')
+parser.add_argument('--sam_attn_dropout', type=float, default=0.0)
+
+# BD-LRU, eq. (9)-(12) #
+parser.add_argument('--use_bdlru', type=str2bool, default=True)
+parser.add_argument('--bdlru_c', type=float, default=8.0, help='scalar c in eq. (11)')
+parser.add_argument('--bdlru_r_min', type=float, default=0.9)
+parser.add_argument('--bdlru_r_max', type=float, default=0.999)
+parser.add_argument('--bdlru_lambda_init', type=str, default='linspace',
+                    choices=['linspace', 'uniform'])
+parser.add_argument('--bdlru_conv_activation', type=str, default='silu', choices=['none', 'silu'])
+parser.add_argument('--exclude_lambda_from_decay', type=str2bool, default=False,
+                    help='exclude the BD-LRU lambda from weight decay (RecBLR uses wd=0; '
+                         'LRURec decays its recurrence parameters, which is the default here)')
+
+# perturbation injection, eq. (17)/(18) #
+parser.add_argument('--use_perturbation', type=str2bool, default=True)
+parser.add_argument('--perturbation_probability', type=float, default=0.1, help='theta in eq. (17)')
+parser.add_argument('--perturbation_low', type=float, default=0.0)
+parser.add_argument('--perturbation_high', type=float, default=1.0)
+parser.add_argument('--perturbation_weight', type=float, default=1.0,
+                    help='coefficient of L_Per in eq. (23); the paper uses 1')
+
+# uncertainty scaling, eq. (19)-(24) #
+parser.add_argument('--use_uncertainty', type=str2bool, default=True)
+parser.add_argument('--uncertainty_alpha', type=float, default=None, help='alpha in eq. (23)')
+parser.add_argument('--uncertainty_beta', type=float, default=0.0,
+                    help='beta in eq. (22); the paper sets it to 0')
+parser.add_argument('--uncertainty_loss', type=str, default='approx', choices=['approx', 'exact'],
+                    help='approx = eq. (22) (used by the paper for eq. (24)); exact = eq. (19)/(21)')
+parser.add_argument('--uncertainty_logvar_clamp', type=float, default=8.0,
+                    help='numerical safety clamp on Log(sigma^2); 0 disables')
+
+# bookkeeping #
+parser.add_argument('--smoke_iters', type=int, default=10,
+                    help='scripts/smoke_ablations.py: training steps per ablation')
+parser.add_argument('--smoke_val_batches', type=int, default=4,
+                    help='scripts/smoke_ablations.py: validation batches per ablation')
+parser.add_argument('--exp_name', type=str, default=None,
+                    help='experiment folder name under experiments/<model_code>/')
+
+# parse_known_args (rather than parse_args) so that importing this module from
+# pytest -- which owns sys.argv -- does not abort.
+args, _unknown_args = parser.parse_known_args()
+if _unknown_args and 'pytest' not in sys.modules:
+    print('[config] ignoring unrecognised arguments:', _unknown_args)

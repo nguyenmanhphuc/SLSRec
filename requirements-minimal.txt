@@ -1,0 +1,13 @@
+# Minimal dependency set for the SLSRec reproduction.
+# Verified with Python 3.10 / torch 2.1.0.
+torch>=1.13
+numpy>=1.23,<2.0
+pandas>=1.5
+tqdm>=4.64
+tensorboard>=2.10        # trainer/base.py's SummaryWriter (only when --use_wandb=False)
+pytest>=7.0              # tests/
+
+# Optional, not required for the reference PyTorch path:
+#   triton              # --scan_impl=triton (CUDA only)
+#   causal-conv1d       # RecBLR's fused causal conv (CUDA only)
+#   wandb               # --use_wandb=True

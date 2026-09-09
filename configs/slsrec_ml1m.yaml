@@ -1,0 +1,92 @@
+# SLSRec on MovieLens-1M -- the settings actually used in this reproduction.
+#
+# This file documents the resolved configuration; the runnable entry point is
+# `train.py`, which takes the same values as CLI flags (see `commands` below).
+# Everything not listed here is inherited unchanged from the LRURec harness
+# (config.py::set_template).
+
+experiment:
+  model_code: slsrec
+  dataset_code: ml-1m
+  seed: 42
+
+dataset:                       # LRURec protocol, unchanged
+  min_uc: 5                    # >= 5 interactions per user
+  min_sc: 5                    # >= 5 interactions per item
+  min_rating: 0
+  split: leave_one_out         # last item -> test, second-to-last -> val
+  max_len: 200                 # bert_max_len
+  train_target: per_position_next_item
+  eval: full_sort              # rank against every item; seen items and id 0 masked out
+
+optimization:                  # SLSRec Sec. IV-A4 + LRURec harness
+  optimizer: AdamW
+  lr: 0.001
+  weight_decay: 0.01
+  adam_epsilon: 1.0e-9
+  max_grad_norm: 5.0
+  enable_lr_schedule: false
+  enable_lr_warmup: false
+  train_batch_size: 128
+  val_batch_size: 256
+  test_batch_size: 256
+  num_epochs: 500              # paper: up to 1000; harness default 500
+  val_strategy: iteration
+  val_iterations: 500          # LRURec's ML-1M setting
+  early_stopping: true
+  early_stopping_patience: 10
+  best_metric: Recall@10
+  metric_ks: [1, 5, 10, 20, 50]
+
+architecture:
+  bert_hidden_units: 64        # D
+  slsrec_expand: 2             # d = 2D = 128  (paper Sec. III-B2)
+  bert_num_blocks: 2           # L
+  bert_dropout: 0.2            # ML-1M optimum (paper Sec. IV-E1)
+  slsrec_d_conv: 4             # causal depth-wise conv kernel (RecBLR)
+  scan_impl: torch             # portable parallel scan; 'triton' needs CUDA+triton
+  use_item_bias: false         # eq. (15) has no item bias
+
+self_attention_gate:           # eq. (3)/(8)
+  use_sam_gate: true
+  sam_conv: true
+  sam_conv_activation: none    # eq. (3) is a plain sum
+  sam_num_heads: 1             # eq. (8) is single-head
+  sam_attn_dropout: 0.0
+
+bd_lru:                        # eq. (9)-(12)
+  use_bdlru: true
+  bdlru_c: 8.0                 # c in eq. (11)
+  bdlru_r_min: 0.9             # a_t initialised uniformly over [0.9, 0.999]
+  bdlru_r_max: 0.999
+  bdlru_lambda_init: linspace
+  bdlru_conv_activation: silu  # RecBLR applies SiLU after Conv1-D2
+
+perturbation_injection:        # eq. (17)/(18)
+  use_perturbation: true
+  perturbation_probability: 0.1   # theta, paper default (Sec. IV-E2)
+  perturbation_low: 0.0           # U(0, 1)
+  perturbation_high: 1.0
+  perturbation_weight: 1.0        # coefficient of L_Per in eq. (23)
+
+uncertainty_scaling:           # eq. (19)-(24)
+  use_uncertainty: true
+  uncertainty_alpha: 0.3       # alpha, ML-1M optimum (Sec. IV-E3)
+  uncertainty_beta: 0.0        # the paper sets beta = 0
+  uncertainty_loss: approx     # eq. (22), the form used to derive eq. (24)
+  uncertainty_logvar_clamp: 8.0
+
+commands:
+  A_bdlru_ce: >-
+    python train.py --dataset_code=ml-1m --model_code=slsrec --seed=42
+    --use_sam_gate=false --sam_conv=false
+    --use_perturbation=false --use_uncertainty=false --exp_name=A_bdlru_ce
+  B_sam_gate: >-
+    python train.py --dataset_code=ml-1m --model_code=slsrec --seed=42
+    --use_perturbation=false --use_uncertainty=false --exp_name=B_sam_gate
+  C_perturbation: >-
+    python train.py --dataset_code=ml-1m --model_code=slsrec --seed=42
+    --use_perturbation=true --use_uncertainty=false --exp_name=C_perturbation
+  D_full_slsrec: >-
+    python train.py --dataset_code=ml-1m --model_code=slsrec --seed=42
+    --exp_name=D_full_slsrec
