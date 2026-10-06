@@ -45,7 +45,7 @@ five-seed sweep or multi-dataset reproduction has been attempted (see §10), so
 | (17) | `x̄_t = U(0,1)` w.p. `θ`, else `x_t` | `BDLRU._perturb` |
 | (18) | `L_Per = −Log(ȳ_ui)` | `slsrec_losses` (`l_per`) |
 | (19) | `ỹ = Softmax((1/σ²)(M × x⁽ᴸ⁾))` | `slsrec_losses`, `uncertainty_loss='exact'` |
-| (20) | `Log(σ²) = Mc[i,:]ᵀ LayerNorm(Dropout(PFFN(xᶜ) + xᶜ))` | `model/slsrec.py::UncertaintyEstimator` → `UncertaintyPFFNBlock` |
+| (20) | `Log(σ²) = Mc[i,:]ᵀ LayerNorm(Dropout(PFFN(xᶜ)) + xᶜ)` — Fig. 2 placement (§8.11) | `model/slsrec.py::UncertaintyEstimator` → `PFFNBlock` (`--unc_dropout_form=eq20` → `UncertaintyPFFNBlock`) |
 | (21) | `L_Unc = −Log(ỹ_ui)` | `slsrec_losses` (`l_unc`, `exact`) |
 | (22) | `L_Unc ≈ (1/σ²)L_Rec + β·Log(σ)` | `slsrec_losses` (`l_unc`, `approx`, **default**) |
 | (23)/(24) | `L = (1 + α/σ²)L_Rec + L_Per` | `slsrec_losses` (`l_total`) |
@@ -134,8 +134,9 @@ Preprocessed statistics (measured, `data/preprocessed/ml-1m_*/dataset.pkl`):
 | uncertainty `β` | 0 | paper Sec. III-C3 |
 | checkpoint metric | Recall@10 | task / LRURec |
 | evaluation | full sort, Recall / NDCG / MRR @ {1,5,10,20,50} | task / LRURec |
-| validation cadence | every 500 iterations | task / LRURec (see §8.1) |
-| early stopping patience | 10 validations | LRURec |
+| validation cadence | every 5 epochs | paper Sec. IV-A4 (default since §8.1) |
+| early stopping patience | 10 validations (= 50 epochs) | paper Sec. IV-A4 |
+| max epochs | 1000 | paper Sec. IV-A4 |
 
 ### 4.1 All five datasets
 
@@ -262,21 +263,30 @@ conducted every 5 epochs, and an early stopping mechanism is activated if there 
 no improvement in the validation Recall@10 metric for 10 consecutive validation
 epochs." LRURec's harness instead validates every `val_iterations = 500` steps
 (≈ 8.9 epochs on ML-1M, which has 56 training batches per epoch) with a 500-epoch
-cap. **Decision:** follow the task instruction and keep LRURec's
-iteration-based cadence as the default. The paper-literal setting is reachable
-with `--val_strategy=epoch --val_epochs=5 --num_epochs=1000` (the `--val_epochs`
-flag was added for this purpose, and `tests/test_schedule.py` verifies that it
-fires after exactly epochs 5, 10, ... while leaving the iteration path
-untouched).
+cap.
 
-Practical significance of the two halves differs:
+**Decision (current): SLSRec defaults to the paper's schedule** -- 1000 epochs,
+validate every 5 epochs, stop after 10 validations without improvement (= 50
+epochs). `config.set_template` picks the schedule from `--model_code`; the LRURec
+baseline (`--model_code=lru`) keeps LRURec's own protocol (500 epochs, validate
+every `val_iterations`). Explicit flags still override either, e.g.
+`--val_strategy=iteration --val_iterations=500 --num_epochs=500` reproduces the
+earlier runs. `tests/test_schedule.py` drives the real trainer and checks that
+validation fires after exactly epochs 5, 10, ..., that each model gets its own
+default, and that explicit flags win.
 
-* **1000 vs 500 epochs: no effect.** Early stopping fires first -- the ML-1M
-  run stopped at epoch 206 -- so the cap is never reached.
+The runs in §9 (`D_full_slsrec`, `gateexact_*`) were trained under the earlier
+default, LRURec's iteration cadence. Practical significance of the difference:
+
+* **1000 vs 500 epochs: no effect.** Early stopping fired first in every run --
+  `gateexact_sum` stopped exactly at epoch 500 only because its best checkpoint
+  (iter 23000) plus 10 validations of 500 iterations landed on iter 28000.
 * **Cadence: it matters.** 25 validations over 206 epochs instead of ~41 means
   coarser model selection on a plateau whose band is ±1.6%. Measured cost on
   the ML-1M run: the last checkpoint beat the Recall@10-selected one by 0.71%
-  on test (§9.3). Upstream `set_template` unconditionally
+  on test (§9.3). The paper's patience is also *shorter* in epochs (50 vs 89).
+
+Upstream `set_template` unconditionally
 overwrote `--val_iterations` and `--bert_max_len` with its per-dataset values, so
 those flags silently did nothing; they are now only applied when the user did not
 pass them (defaults are unchanged).
@@ -358,17 +368,33 @@ Eq. (7) uses the pattern `LayerNorm(Dropout(·) + residual)`. **Decision:** the
 eq. (7) pattern, i.e. `LayerNorm(Dropout(PFFN(O)) + O)`, consistent with Fig. 1.
 
 Eq. (20), however, explicitly places the uncertainty residual **inside** dropout:
-`LayerNorm(Dropout(PFFN(xc) + xc))`. Fig. 2 depicts the residual bypassing dropout,
-so its diagram conflicts with the printed equation. **Decision (2026-10-06):**
-follow the printed eq. (20) for the uncertainty branch, as requested. A separate
-`UncertaintyPFFNBlock` applies dropout after adding `xc`. Its parameter names and
-shapes are unchanged, so earlier checkpoints load strictly and retain their
-evaluation outputs, but further training uses the corrected dropout placement.
+`LayerNorm(Dropout(PFFN(xc) + xc))`, while Fig. 2 draws `PFFN -> Dropout -> Add &
+Norm` with the residual branching off `X^c_u` and entering Add & Norm directly,
+i.e. `LayerNorm(Dropout(PFFN(xc)) + xc)`. The diagram agrees with every other
+block of the model (both blocks in Fig. 1, eq. 7, and eq. 14 once its missing
+parenthesis is restored); only the printed eq. (20) differs.
 
-The experiments reported here were trained before this correction. Their metrics
-remain results of the former implementation; they do not measure retraining with
-the corrected equation. Regression tests in `tests/test_uncertainty.py` cover
-nonzero training dropout, complete residual dropout and old checkpoint layout.
+History of this decision:
+
+| Date | Uncertainty block | Runs trained with it |
+|---|---|---|
+| until 2026-10-06 | Fig. 2 form (shared `PFFNBlock`) | `D_full_slsrec`, `gateexact_*` |
+| 2026-10-06 | printed eq. (20) (`UncertaintyPFFNBlock`, see `audit_2026-10-06/eq20_fix.md`) | the user's eq.(20) run |
+| **current** | **Fig. 2 form, default**; printed eq. (20) via `--unc_dropout_form=eq20` | -- |
+
+**Current decision:** follow Fig. 2. Both forms share parameter names and shapes,
+so any checkpoint loads strictly under either, and the two are **identical at eval
+time** -- they differ only in whether training-time dropout also hits the residual.
+`tests/test_uncertainty.py` checks each form against its own formula in train and
+eval at dropout 0, 0.2 and 0.75, tells them apart at dropout 1, and checks that a
+checkpoint gives identical eval outputs under both.
+
+Under the default `--uncertainty_loss=approx` the placement barely matters: the
+uncertainty branch is pinned at the logvar clamp within ~5 epochs (measured: L_unc
+4.65 -> 0.71 by epoch 2 with the eq.(20) form, 4.43 -> 0.65 with the Fig. 2 form),
+after which the clamp passes no gradient to it. A controlled comparison of the two
+placements is only informative with `--uncertainty_loss=exact`, where the branch
+stays active.
 
 ### 8.12 Table cross-references V/VI are swapped
 Sec. IV-E2 says "As shown in Table V" for the perturbation rate `θ`, but Table V

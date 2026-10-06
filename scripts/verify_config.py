@@ -129,10 +129,12 @@ def main():
         check('III-C2', 'eq.(20) separate Pc', f'{args.bert_max_len} x {D}',
               tuple(unc.embedding.position.weight.shape),
               tuple(unc.embedding.position.weight.shape) == (args.bert_max_len, D))
-        # Printed eq. (20) puts the residual inside the dropout:
-        # LN(Dropout(PFFN(xc) + xc)).  Probe it in train mode with dropout forced
-        # to 1, where that form drops the residual too and the output collapses
-        # to LN(0) = LN bias -- the eq.(7)-style form would keep xc.
+        # Dropout placement around the residual.  Fig. 2 draws PFFN -> Dropout
+        # -> Add & Norm with the residual entering Add & Norm directly, i.e.
+        # LN(Dropout(PFFN(xc)) + xc) -- the default.  Eq. (20) as printed puts
+        # the residual inside the dropout (--unc_dropout_form=eq20).  Probe the
+        # actual behaviour in train mode with dropout forced to 1: the eq20 form
+        # then drops xc too and collapses to LN(0) = LN bias; Fig. 2 keeps xc.
         from model.slsrec import PFFNBlock
         blk = unc.pffn_block
         probe_x = torch.randn(1, 3, D)
@@ -141,10 +143,14 @@ def main():
         with torch.no_grad():
             probe = blk(probe_x)
         blk.dropout.p = saved_p; blk.train(was_training)
-        literal = torch.allclose(probe, blk.layer_norm.bias.expand_as(probe), atol=1e-6)
-        check('III-C2', 'eq.(20) LN(Dropout(PFFN(xc)+xc))', 'residual inside dropout (printed)',
-              f'{type(blk).__name__}, residual {"inside" if literal else "outside"} dropout',
-              isinstance(blk, PFFNBlock) and literal)
+        inside = torch.allclose(probe, blk.layer_norm.bias.expand_as(probe), atol=1e-6)
+        form = getattr(args, 'unc_dropout_form', 'fig2')
+        want_inside = form == 'eq20'
+        check('III-C2', f'eq.(20) dropout placement ({form})',
+              'residual inside dropout (eq. 20 printed)' if want_inside
+              else 'residual bypasses dropout (Fig. 2)',
+              f'{type(blk).__name__}, residual {"inside" if inside else "outside"} dropout',
+              isinstance(blk, PFFNBlock) and inside == want_inside)
     check('IV-E3', 'eq.(23) alpha (ML-1M optimum)', 0.3, args.uncertainty_alpha, args.uncertainty_alpha == 0.3)
     check('III-C3', 'eq.(23) beta', 0, args.uncertainty_beta, args.uncertainty_beta == 0.0)
     check('III-C3', 'eq.(24) L_Unc form', 'approx (eq.22, as used by eq.24)',

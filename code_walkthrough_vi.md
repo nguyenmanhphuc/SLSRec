@@ -323,14 +323,16 @@ có bảng embedding item/position **riêng** (`Mc`, `Pc`, không share với em
 chính!), chạy qua 1 PFFN, rồi lấy tích vô hướng với embedding của **item nhãn đúng**
 (`labels`) để ra một số vô hướng `log(σ²)` mỗi vị trí:
 ```python
-z = self.pffn_block(xc)                # LN(Dropout(PFFN(xc) + xc)), theo eq. (20)
+z = self.pffn_block(xc)                # LN(Dropout(PFFN(xc)) + xc), theo Fig. 2
 mc = self.embedding.token(labels)      # Mc[i, :] -- baked vào bằng ground-truth label!
 return (mc * z).sum(-1)                # eq. (20): Mc[i,:]^T · LayerNorm(...)
 ```
-Nhánh này dùng `UncertaintyPFFNBlock`: cộng residual **trước** dropout để khớp
-công thức (20) được in. Backbone dùng `PFFNBlock`, cộng residual **sau** dropout
-theo sơ đồ Fig. 1. Fig. 2 vẽ thứ tự khác với công thức (20); hiện thực nhánh
-uncertainty chọn theo công thức.
+Mặc định nhánh này dùng `PFFNBlock` — cộng residual **sau** dropout — theo Fig. 2:
+sơ đồ vẽ `PFFN → Dropout → Add & Norm`, đường residual rẽ ra từ `X^c_u` rồi đi thẳng
+vào Add & Norm, bỏ qua Dropout. Đó cũng là quy ước của mọi khối khác (cả hai khối ở
+Fig. 1, eq. 7, eq. 14). Chỉ riêng công thức (20) in khác: `LN(Dropout(PFFN(xc) + xc))`.
+Dạng đó vẫn chọn được bằng `--unc_dropout_form=eq20` (dùng `UncertaintyPFFNBlock`).
+Hai dạng **giống hệt nhau lúc eval**, chỉ khác lúc train; checkpoint nạp được ở cả hai.
 Lưu ý quan trọng: `log(σ²)` được tính bằng cách **dùng chính nhãn đúng** (`labels`) —
 điều này *chỉ hợp lệ khi training* (vì eval không có label để "gian lận"); ở
 `calculate_metrics` trong `trainer/slsrec.py`, nhánh uncertainty **không hề được gọi**

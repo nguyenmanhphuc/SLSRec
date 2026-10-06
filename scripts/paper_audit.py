@@ -136,10 +136,13 @@ def audit(a):
     else:
         add('MISMATCH', 'III-B2', 'a_t init range', '[0.9, 0.999]',
             f'[{a.bdlru_r_min}, {a.bdlru_r_max}]', 'fix: --bdlru_r_min=0.9 --bdlru_r_max=0.999')
-    add('MATCH', 'III-C2', 'eq.(20) dropout placement', 'LN(Dropout(PFFN(xc) + xc)) as printed',
-        'UncertaintyPFFNBlock (printed form)',
-        'chosen 2026-10-06 (audit_2026-10-06/eq20_fix.md). Identical to LN(Dropout(PFFN)+xc) '
-        'at eval; differs only in training. Runs before that date used the other form')
+    form = getattr(a, 'unc_dropout_form', 'fig2')
+    add('AMBIGUOUS', 'III-C2', 'uncertainty dropout placement',
+        'Fig. 2: LN(Drop(PFFN)+xc); eq.(20) printed: LN(Drop(PFFN+xc))',
+        'Fig. 2 (default)' if form == 'fig2' else 'eq.(20) as printed',
+        'Fig. 2 matches every other block (Fig. 1, eq. 7, eq. 14). Identical at eval, '
+        'differs only in training; with approx the branch dies within ~5 epochs, so it barely '
+        f'matters there. alt: --unc_dropout_form={"eq20" if form == "fig2" else "fig2"}')
     add('MATCH' if a.use_perturbation else 'MISMATCH', 'III-C1', 'perturbation injection', 'on',
         a.use_perturbation)
     add('MATCH' if a.use_uncertainty else 'MISMATCH', 'III-C2', 'uncertainty scaling', 'on',

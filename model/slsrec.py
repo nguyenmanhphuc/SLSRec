@@ -20,7 +20,7 @@ Equation map (paper -> code)
     (17) perturbation x_t -> U(0,1) w.p. theta        -> model/bdlru.py::BDLRU._perturb
     (18) L_Per = -Log(ybar_ui)                        -> trainer/slsrec.py
     (19) ytilde = Softmax((1/sigma^2) M x^(L))        -> trainer/slsrec.py (exact mode)
-    (20) Log(sigma^2) = Mc[i,:]' LN(Drop(PFFN(xc)+xc))-> UncertaintyEstimator
+    (20) Log(sigma^2) = Mc[i,:]' LN(Drop(PFFN(xc))+xc)-> UncertaintyEstimator (Fig. 2)
     (21) L_Unc = -Log(ytilde_ui)                      -> trainer/slsrec.py
     (22) L_Unc ~ (1/sigma^2) L_Rec + beta Log(sigma)  -> trainer/slsrec.py (approx mode)
     (23)/(24) L = (1 + alpha/sigma^2) L_Rec + L_Per   -> trainer/slsrec.py
@@ -221,9 +221,15 @@ class PFFNBlock(nn.Module):
 
 
 class UncertaintyPFFNBlock(PFFNBlock):
-    """LayerNorm(Dropout(PFFN(xc) + xc)) -- printed eq. (20).
+    """LayerNorm(Dropout(PFFN(xc) + xc)) -- eq. (20) exactly as printed.
 
-    Reuses the module names of PFFNBlock to keep existing checkpoints loadable.
+    Only used with ``--unc_dropout_form=eq20``.  The default follows Fig. 2,
+    which draws PFFN -> Dropout -> Add & Norm with the residual entering Add &
+    Norm directly, i.e. plain PFFNBlock -- the same placement as every other
+    block (Fig. 1, eq. 7, eq. 14).  The two forms agree exactly at eval time
+    and differ only in whether training-time dropout also hits the residual.
+
+    Reuses the module names of PFFNBlock, so checkpoints load under either form.
     """
 
     def forward(self, x):
@@ -245,16 +251,24 @@ class SLSRecBlock(nn.Module):
 # Uncertainty estimator -- eq. (20)
 # --------------------------------------------------------------------------- #
 class UncertaintyEstimator(nn.Module):
-    """Log(sigma_u^2) = Mc[i,:]' LayerNorm(Dropout(PFFN(xc_u) + xc_u)).
+    """Log(sigma_u^2) = Mc[i,:]' LayerNorm(Dropout(PFFN(xc_u)) + xc_u)  (Fig. 2).
+
+    ``dropout_form='eq20'`` moves the residual inside the dropout, as eq. (20)
+    is printed: LayerNorm(Dropout(PFFN(xc_u) + xc_u)).  See UncertaintyPFFNBlock.
 
     Runs on its own item/position embedding tables (Mc, Pc) and is purely
     position-wise, so it never mixes information across time steps.
     """
 
-    def __init__(self, num_items, hidden, max_len, dropout):
+    FORMS = {'fig2': PFFNBlock, 'eq20': UncertaintyPFFNBlock}
+
+    def __init__(self, num_items, hidden, max_len, dropout, dropout_form='fig2'):
         super().__init__()
+        if dropout_form not in self.FORMS:
+            raise ValueError(f'unknown unc_dropout_form: {dropout_form}')
+        self.dropout_form = dropout_form
         self.embedding = SLSRecEmbedding(num_items, hidden, max_len, dropout)
-        self.pffn_block = UncertaintyPFFNBlock(hidden, hidden * 4, dropout)
+        self.pffn_block = self.FORMS[dropout_form](hidden, hidden * 4, dropout)
 
     def forward(self, seqs, labels):
         """seqs, labels: [B, L] -> log sigma^2: [B, L]."""
@@ -278,7 +292,8 @@ class SLSRecModel(nn.Module):
         if self.use_item_bias:
             self.bias = nn.Parameter(torch.zeros(args.num_items + 1))
         self.uncertainty = (
-            UncertaintyEstimator(args.num_items, D, args.bert_max_len, args.bert_dropout)
+            UncertaintyEstimator(args.num_items, D, args.bert_max_len, args.bert_dropout,
+                                 dropout_form=getattr(args, 'unc_dropout_form', 'fig2'))
             if args.use_uncertainty else None
         )
         self.truncated_normal_init()

@@ -114,6 +114,40 @@ def test_patience_translates_to_the_paper_epoch_span(cadence, patience, expected
     assert cadence * patience == expected_epochs
 
 
+def _resolve(flags):
+    import sys
+    saved = sys.argv
+    try:
+        sys.argv = ['x']
+        import config as cfg
+        a = cfg.parser.parse_args(flags)
+        cfg.set_template(a)
+    finally:
+        sys.argv = saved
+    return a
+
+
+def test_slsrec_defaults_to_the_paper_schedule():
+    """No schedule flags at all -> SLSRec Sec. IV-A4: 1000 epochs, validate
+    every 5 epochs, stop after 10 validations without improvement (50 epochs)."""
+    a = _resolve(['--dataset_code=ml-1m', '--model_code=slsrec'])
+    assert (a.num_epochs, a.val_strategy, a.val_epochs, a.early_stopping_patience) == \
+        (1000, 'epoch', 5, 10)
+
+
+def test_lrurec_baseline_keeps_its_own_schedule():
+    """The LRURec baseline must stay on LRURec's protocol."""
+    for flags in (['--dataset_code=ml-1m', '--model_code=lru'], ['--dataset_code=ml-1m']):
+        a = _resolve(flags)
+        assert (a.num_epochs, a.val_strategy, a.val_iterations) == (500, 'iteration', 500), flags
+
+
+def test_explicit_schedule_flags_override_the_defaults():
+    a = _resolve(['--dataset_code=ml-1m', '--model_code=slsrec',
+                  '--num_epochs=500', '--val_strategy=iteration', '--val_iterations=500'])
+    assert (a.num_epochs, a.val_strategy, a.val_iterations) == (500, 'iteration', 500)
+
+
 def test_paper_schedule_flags_resolve():
     """The exact flag combination documented for the paper-literal schedule."""
     import sys

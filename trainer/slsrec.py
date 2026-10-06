@@ -90,9 +90,9 @@ class SLSRecTrainer(BaseTrainer):
         # training L_rec: train L_rec - val CE is the generalisation gap that the
         # perturbation term (eq. 17/18) is supposed to close.
         val_ce = F.cross_entropy(scores, labels.view(-1)).item()
-        B, L = seqs.shape
-        for i in range(L):
-            scores[torch.arange(scores.size(0)), seqs[:, i]] = -1e9   # drop already-seen items
+        # drop already-seen items: one scatter instead of a 200-step loop of
+        # indexed writes (each of which also copied a CPU arange to the GPU)
+        scores.scatter_(1, seqs, -1e9)
         scores[:, 0] = -1e9                                            # drop the padding item
         metrics = absolute_recall_mrr_ndcg_for_ks(scores, labels.view(-1), self.metric_ks)
         metrics['CE'] = val_ce

@@ -57,6 +57,17 @@ def set_template(args):
     args.test_batch_size = batch * 2
 
     if args.model_code is None: args.model_code = 'lru'
+
+    # Training schedule.  SLSRec follows its paper (Sec. IV-A4): "training is
+    # limited to a maximum of 1000 epochs.  Validation is conducted every 5
+    # epochs, and ... no improvement in the validation Recall@10 metric for 10
+    # consecutive validation epochs".  The LRURec baseline keeps LRURec's own
+    # protocol (500 epochs, validate every val_iterations steps).  Explicitly
+    # passed flags always win.
+    is_slsrec = args.model_code == 'slsrec'
+    if args.num_epochs is None: args.num_epochs = 1000 if is_slsrec else 500
+    if args.val_strategy is None: args.val_strategy = 'epoch' if is_slsrec else 'iteration'
+    if args.val_epochs is None: args.val_epochs = 5 if is_slsrec else 1
     if torch.cuda.is_available(): args.device = 'cuda'
     else: args.device = 'cpu'
     args.optimizer = 'AdamW'
@@ -152,7 +163,7 @@ parser.add_argument('--xlong_negative_sample_size', type=int, default=10000)
 # device #
 parser.add_argument('--device', type=str, default='cuda', choices=['cpu', 'cuda'])
 # optimizer & lr#
-parser.add_argument('--num_epochs', type=int, default=500)
+parser.add_argument('--num_epochs', type=int, default=None)  # slsrec: 1000 (paper), lru: 500
 parser.add_argument('--optimizer', type=str, default='AdamW', choices=['AdamW', 'Adam'])
 parser.add_argument('--weight_decay', type=float, default=None)
 parser.add_argument('--adam_epsilon', type=float, default=1e-9)
@@ -166,9 +177,9 @@ parser.add_argument('--enable_lr_warmup', type=bool, default=True)
 parser.add_argument('--warmup_steps', type=int, default=100)
 
 # evaluation #
-parser.add_argument('--val_strategy', type=str, default='iteration', choices=['epoch', 'iteration'])
+parser.add_argument('--val_strategy', type=str, default=None, choices=['epoch', 'iteration'])  # slsrec: epoch, lru: iteration
 parser.add_argument('--val_iterations', type=int, default=None)  # only for iteration val_strategy
-parser.add_argument('--val_epochs', type=int, default=1)  # only for epoch val_strategy
+parser.add_argument('--val_epochs', type=int, default=None)  # only for epoch val_strategy; slsrec: 5, lru: 1
                                                           # (SLSRec paper validates every 5 epochs)
 parser.add_argument('--early_stopping', type=bool, default=True)
 parser.add_argument('--early_stopping_patience', type=int, default=10)
@@ -242,6 +253,11 @@ parser.add_argument('--uncertainty_beta', type=float, default=0.0,
                     help='beta in eq. (22); the paper sets it to 0')
 parser.add_argument('--uncertainty_loss', type=str, default='approx', choices=['approx', 'exact'],
                     help='approx = eq. (22) (used by the paper for eq. (24)); exact = eq. (19)/(21)')
+parser.add_argument('--unc_dropout_form', type=str, default='fig2', choices=['fig2', 'eq20'],
+                    help="dropout placement in the uncertainty estimator.  fig2 = "
+                         "LN(Dropout(PFFN(xc)) + xc), as drawn in Fig. 2 and as every other "
+                         "block (Fig. 1, eq. 7, eq. 14); eq20 = LN(Dropout(PFFN(xc) + xc)), as "
+                         "eq. (20) is printed.  Identical at eval time.")
 parser.add_argument('--uncertainty_logvar_clamp', type=float, default=8.0,
                     help='numerical safety clamp on Log(sigma^2); 0 disables')
 

@@ -100,13 +100,12 @@ COMMON = {
     'bdlru_r_min':         (0.9,     'COMMON',    'lam'),
     'bdlru_r_max':         (0.999,   'COMMON',    'lam'),
     'uncertainty_beta':    (0.0,     'COMMON',    'beta'),
-    'num_epochs':          (1000,    'DEVIATION', 'common'),
+    'num_epochs':          (1000,    'COMMON',    'common'),
+    'val_strategy':        ('epoch', 'COMMON',    'common'),
+    'val_epochs':          (5,       'COMMON',    'common'),
 }
 
-DEVIATION_NOTE = {
-    'num_epochs': 'harness default is 500; the paper says 1000 (report sec. 8.1). '
-                  'Early stopping fires first in practice -- pass --num_epochs=1000 to match.',
-}
+DEVIATION_NOTE = {}   # the SLSRec schedule now defaults to the paper's (config.set_template)
 
 
 def resolve(dataset):

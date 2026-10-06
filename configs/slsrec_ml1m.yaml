@@ -30,9 +30,9 @@ optimization:                  # SLSRec Sec. IV-A4 + LRURec harness
   train_batch_size: 128
   val_batch_size: 256
   test_batch_size: 256
-  num_epochs: 500              # paper: up to 1000; harness default 500
-  val_strategy: iteration
-  val_iterations: 500          # LRURec's ML-1M setting
+  num_epochs: 1000             # paper Sec. IV-A4 (SLSRec default)
+  val_strategy: epoch          # paper: "Validation is conducted every 5 epochs"
+  val_epochs: 5                # 10 validations without improvement = 50 epochs
   early_stopping: true
   early_stopping_patience: 10
   best_metric: Recall@10
@@ -75,6 +75,7 @@ uncertainty_scaling:           # eq. (19)-(24)
   uncertainty_beta: 0.0        # the paper sets beta = 0
   uncertainty_loss: approx     # eq. (22), the form used to derive eq. (24)
   uncertainty_logvar_clamp: 8.0
+  unc_dropout_form: fig2       # LN(Dropout(PFFN(xc)) + xc), as drawn in Fig. 2; eq20 = printed eq. (20)
 
 commands:
   A_bdlru_ce: >-
