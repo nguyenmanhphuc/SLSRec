@@ -26,5 +26,16 @@ def train(args, export_root=None):
 
 
 if __name__ == "__main__":
+    # config.py parses with parse_known_args so it stays importable from pytest
+    # and from scripts with their own flags -- but for training, an unknown flag
+    # must not be dropped with a one-line warning: a flag this checkout does not
+    # know (e.g. a newer option run against older code) would silently rerun a
+    # different experiment.
+    from config import _unknown_args
+    if _unknown_args:
+        raise SystemExit('[train.py] unrecognised argument(s): {} -- refusing to train with '
+                         'flags that would be silently ignored. Check the spelling, or update '
+                         'the code if the flag is newer than this checkout.'
+                         .format(' '.join(_unknown_args)))
     set_template(args)
     train(args)
