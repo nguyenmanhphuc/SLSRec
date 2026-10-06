@@ -1,4 +1,4 @@
-experiments/
+
 _ref_LRURec/
 _ref_RecBLR/
 __pycache__/
@@ -6,6 +6,6 @@ __pycache__/
 logs_*.txt
 smoke_ablations.json
 .pytest_cache/
-runlogs/
+
 /audit_2026-09-29
 /audit_2026-10-06
