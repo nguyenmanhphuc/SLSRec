@@ -45,7 +45,7 @@ five-seed sweep or multi-dataset reproduction has been attempted (see §10), so
 | (17) | `x̄_t = U(0,1)` w.p. `θ`, else `x_t` | `BDLRU._perturb` |
 | (18) | `L_Per = −Log(ȳ_ui)` | `slsrec_losses` (`l_per`) |
 | (19) | `ỹ = Softmax((1/σ²)(M × x⁽ᴸ⁾))` | `slsrec_losses`, `uncertainty_loss='exact'` |
-| (20) | `Log(σ²) = Mc[i,:]ᵀ LayerNorm(Dropout(PFFN(xᶜ)) + xᶜ)` | `model/slsrec.py::UncertaintyEstimator` |
+| (20) | `Log(σ²) = Mc[i,:]ᵀ LayerNorm(Dropout(PFFN(xᶜ) + xᶜ))` | `model/slsrec.py::UncertaintyEstimator` → `UncertaintyPFFNBlock` |
 | (21) | `L_Unc = −Log(ỹ_ui)` | `slsrec_losses` (`l_unc`, `exact`) |
 | (22) | `L_Unc ≈ (1/σ²)L_Rec + β·Log(σ)` | `slsrec_losses` (`l_unc`, `approx`, **default**) |
 | (23)/(24) | `L = (1 + α/σ²)L_Rec + L_Per` | `slsrec_losses` (`l_total`) |
@@ -137,6 +137,55 @@ Preprocessed statistics (measured, `data/preprocessed/ml-1m_*/dataset.pkl`):
 | validation cadence | every 500 iterations | task / LRURec (see §8.1) |
 | early stopping patience | 10 validations | LRURec |
 
+### 4.1 All five datasets
+
+Resolved by `config.py::set_slsrec_template`; audited by `scripts/verify_hparams.py`
+(exit 0 = every explicitly published value matches).
+
+| Parameter | ML-1M | Beauty | Video | Sports | Steam | Source |
+|---|---|---|---|---|---|---|
+| max sequence length | 200 | 50 | 50 | 50 | 50 | Sec. IV-A1, explicit |
+| dropout | 0.2 | 0.75 | **0.6** | 0.75 | 0.2 | Figs. 6 & 7 (see below) |
+| perturbation rate `θ` | 0.1 | 0.1 | 0.1 | 0.1 | 0.1 | Sec. IV-E2, explicit |
+| uncertainty rate `α` | 0.3 | 0.01 | 0.3 | 0.3 | 0.3 | Sec. IV-E3, explicit |
+| dropout search grid | {0,.2,.4,.6,.8} | {0,.25,.5,.75,.95} | {0,.2,.4,.6,.8} | {0,.25,.5,.75,.95} | {0,.2,.4,.6,.8} | Sec. IV-A4 |
+
+Everything else is dataset independent: `D`=64, `d`=2D=128, 2 blocks, batch 128,
+AdamW lr 1e-3, weight decay 1e-2, `c`=8, `a_t` init [0.9, 0.999], `β`=0,
+Recall@10 selection, patience 10 validation rounds.
+
+### 4.2 Where the per-dataset dropout comes from
+
+Sec. IV-E1 names only two values in prose — 0.2 for "dense datasets, such as
+ML-1M" and 0.75 for "sparse datasets, such as Sports" — so Beauty, Video and
+Steam look unspecified. They are not: **Figs. 6 and 7 plot Recall@20 and
+NDCG@20 against dropout for all five datasets**, and each curve's peak
+reproduces that dataset's Table II entry:
+
+| | code | Fig. 6 peak | value there | Table II Recall@20 | gap |
+|---|---|---|---|---|---|
+| ML-1M | 0.2 | 0.2 | 0.468 | 0.46732 | 0.0007 |
+| Beauty | 0.75 | 0.75 | 0.075 | 0.07727 | 0.0023 |
+| Video | 0.6 | 0.6 | 0.173 | 0.17353 | 0.0005 |
+| Sports | 0.75 | 0.75 | 0.048 | 0.04768 | 0.0002 |
+| Steam | 0.2 | 0.2 | 0.210 | 0.20697 | 0.0030 |
+
+Every gap is within the precision of reading a printed plot (±0.005 on the left
+panel, where ML-1M, Video and Steam share a 0.1–0.5 axis), so the check is on
+which grid point is the argmax — legible from the figure — rather than on
+absolute values.
+
+**Video was initially wrong in this reproduction.** Sec. IV-A4 groups Video with
+ML-1M and Steam by *search grid* (`{0, 0.2, 0.4, 0.6, 0.8}`), which reads as
+"dense → 0.2", and that is what `set_slsrec_template` used. The figure shows the
+optimum is **0.6**: at 0.2 Fig. 6 gives ≈0.158 Recall@20, against the 0.17353
+that Table II reports. Fixed; ML-1M results are unaffected.
+
+### 4.3 Values the paper does not pin down
+
+None, for the five published datasets. `xlong` is not in the SLSRec paper and
+keeps the 0.2 default.
+
 ---
 
 ## 5. Tensor shapes (ML-1M, batch 4)
@@ -216,7 +265,18 @@ epochs." LRURec's harness instead validates every `val_iterations = 500` steps
 cap. **Decision:** follow the task instruction and keep LRURec's
 iteration-based cadence as the default. The paper-literal setting is reachable
 with `--val_strategy=epoch --val_epochs=5 --num_epochs=1000` (the `--val_epochs`
-flag was added for this purpose). Upstream `set_template` unconditionally
+flag was added for this purpose, and `tests/test_schedule.py` verifies that it
+fires after exactly epochs 5, 10, ... while leaving the iteration path
+untouched).
+
+Practical significance of the two halves differs:
+
+* **1000 vs 500 epochs: no effect.** Early stopping fires first -- the ML-1M
+  run stopped at epoch 206 -- so the cap is never reached.
+* **Cadence: it matters.** 25 validations over 206 epochs instead of ~41 means
+  coarser model selection on a plateau whose band is ±1.6%. Measured cost on
+  the ML-1M run: the last checkpoint beat the Recall@10-selected one by 0.71%
+  on test (§9.3). Upstream `set_template` unconditionally
 overwrote `--val_iterations` and `--bert_max_len` with its per-dataset values, so
 those flags silently did nothing; they are now only applied when the user did not
 pass them (defaults are unchanged).
@@ -292,11 +352,23 @@ Eq. (15) has no per-item bias; LRURec's prediction head does. **Decision:**
 follow the paper (`--use_item_bias=false`); the LRURec behaviour is available via
 `--use_item_bias=true`.
 
-### 8.11 Parenthesis typo in eq. (14)
+### 8.11 Parenthesis typo in eq. (14) and uncertainty residual dropout
 Eq. (14) is printed as `LayerNorm(Dropout(PFFN(O_u) + O_u)` — unbalanced.
 Eq. (7) uses the pattern `LayerNorm(Dropout(·) + residual)`. **Decision:** the
-eq. (7) pattern, i.e. `LayerNorm(Dropout(PFFN(O)) + O)`. The same reading is
-applied to eq. (20).
+eq. (7) pattern, i.e. `LayerNorm(Dropout(PFFN(O)) + O)`, consistent with Fig. 1.
+
+Eq. (20), however, explicitly places the uncertainty residual **inside** dropout:
+`LayerNorm(Dropout(PFFN(xc) + xc))`. Fig. 2 depicts the residual bypassing dropout,
+so its diagram conflicts with the printed equation. **Decision (2026-10-06):**
+follow the printed eq. (20) for the uncertainty branch, as requested. A separate
+`UncertaintyPFFNBlock` applies dropout after adding `xc`. Its parameter names and
+shapes are unchanged, so earlier checkpoints load strictly and retain their
+evaluation outputs, but further training uses the corrected dropout placement.
+
+The experiments reported here were trained before this correction. Their metrics
+remain results of the former implementation; they do not measure retraining with
+the corrected equation. Regression tests in `tests/test_uncertainty.py` cover
+nonzero training dropout, complete residual dropout and old checkpoint layout.
 
 ### 8.12 Table cross-references V/VI are swapped
 Sec. IV-E2 says "As shown in Table V" for the perturbation rate `θ`, but Table V

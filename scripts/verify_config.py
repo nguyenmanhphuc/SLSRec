@@ -129,8 +129,22 @@ def main():
         check('III-C2', 'eq.(20) separate Pc', f'{args.bert_max_len} x {D}',
               tuple(unc.embedding.position.weight.shape),
               tuple(unc.embedding.position.weight.shape) == (args.bert_max_len, D))
-        check('III-C2', 'eq.(20) estimator is a PFFN', 'PFFN + Dropout + LayerNorm',
-              type(unc.pffn_block).__name__, type(unc.pffn_block).__name__ == 'PFFNBlock')
+        # Printed eq. (20) puts the residual inside the dropout:
+        # LN(Dropout(PFFN(xc) + xc)).  Probe it in train mode with dropout forced
+        # to 1, where that form drops the residual too and the output collapses
+        # to LN(0) = LN bias -- the eq.(7)-style form would keep xc.
+        from model.slsrec import PFFNBlock
+        blk = unc.pffn_block
+        probe_x = torch.randn(1, 3, D)
+        saved_p, was_training = blk.dropout.p, blk.training
+        blk.dropout.p = 1.0; blk.train()
+        with torch.no_grad():
+            probe = blk(probe_x)
+        blk.dropout.p = saved_p; blk.train(was_training)
+        literal = torch.allclose(probe, blk.layer_norm.bias.expand_as(probe), atol=1e-6)
+        check('III-C2', 'eq.(20) LN(Dropout(PFFN(xc)+xc))', 'residual inside dropout (printed)',
+              f'{type(blk).__name__}, residual {"inside" if literal else "outside"} dropout',
+              isinstance(blk, PFFNBlock) and literal)
     check('IV-E3', 'eq.(23) alpha (ML-1M optimum)', 0.3, args.uncertainty_alpha, args.uncertainty_alpha == 0.3)
     check('III-C3', 'eq.(23) beta', 0, args.uncertainty_beta, args.uncertainty_beta == 0.0)
     check('III-C3', 'eq.(24) L_Unc form', 'approx (eq.22, as used by eq.24)',
@@ -154,7 +168,11 @@ def main():
     check('IV-A3', 'evaluation', 'full sort over all items', 'full sort (see calculate_metrics)', True)
     check('task', 'seed', 42, args.seed, args.seed == 42)
     check('task', 'max grad norm', 5.0, args.max_grad_norm, args.max_grad_norm == 5.0)
-    check('LRURec', 'validation cadence', '500 iterations', args.val_iterations, args.val_iterations == 500)
+    paper_cadence = args.val_strategy == 'epoch' and args.val_epochs == 5
+    check('IV-A4', 'validation cadence', 'every 5 epochs',
+          f'every {args.val_epochs} epoch(s)' if args.val_strategy == 'epoch'
+          else f'every {args.val_iterations} iters (LRURec default)', paper_cadence)
+    check('IV-A4', 'max epochs', 1000, args.num_epochs, args.num_epochs == 1000)
 
     # ---------------- runtime behaviour at THIS config ---------------- #
     torch.manual_seed(args.seed)

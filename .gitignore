@@ -7,3 +7,5 @@ logs_*.txt
 smoke_ablations.json
 .pytest_cache/
 runlogs/
+/audit_2026-09-29
+/audit_2026-10-06

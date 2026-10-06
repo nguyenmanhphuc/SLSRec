@@ -11,6 +11,12 @@ from torch.optim.lr_scheduler import LambdaLR
 from tqdm import tqdm
 
 import json
+import os
+import platform
+import socket
+import subprocess
+import sys
+import time
 import numpy as np
 from abc import ABCMeta
 from pathlib import Path
@@ -61,19 +67,30 @@ class BaseTrainer(metaclass=ABCMeta):
             self.args, writer, self.val_loggers, self.test_loggers, use_wandb)
         
         print(args)
-        print('Total parameters:', sum(p.numel() for p in model.parameters()))
-        print('Encoder parameters:', sum(p.numel() for n, p in model.named_parameters() \
-                                         if 'embedding' not in n))
+        total_params = sum(p.numel() for p in model.parameters())
+        encoder_params = sum(p.numel() for n, p in model.named_parameters()
+                             if 'embedding' not in n)
+        print('Total parameters:', total_params)
+        print('Encoder parameters:', encoder_params)
+
+        self._start_time = time.time()
+        self._epochs_completed = 0
+        self._accum_iter = 0
+        self._early_stopped = False
+        self._dump_run_config(total_params, encoder_params)
 
     def train(self):
         accum_iter = 0
         self.exit_training = self.validate(0, accum_iter)
         for epoch in range(self.num_epochs):
             accum_iter = self.train_one_epoch(epoch, accum_iter)
+            self._epochs_completed = epoch + 1
+            self._accum_iter = accum_iter
             val_every = getattr(self.args, 'val_epochs', 1)
             if self.args.val_strategy == 'epoch' and (epoch + 1) % val_every == 0:
                 self.exit_training = self.validate(epoch, accum_iter)  # val every val_epochs epochs
             if self.exit_training:
+                self._early_stopped = True
                 print('Early stopping triggered. Exit training')
                 break
         self.logger_service.complete()
@@ -121,6 +138,90 @@ class BaseTrainer(metaclass=ABCMeta):
         print('[train] ' + json.dumps(record))
         with open(os.path.join(self.export_root, 'train_losses.jsonl'), 'a') as f:
             f.write(json.dumps(record) + chr(10))
+
+    def _git_revision(self, cwd):
+        """Short commit of the tree at `cwd`, with a `-dirty` suffix; None if not a repo."""
+        try:
+            rev = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=cwd,
+                                          stderr=subprocess.DEVNULL).decode().strip()
+            dirty = subprocess.check_output(['git', 'status', '--porcelain'], cwd=cwd,
+                                            stderr=subprocess.DEVNULL).decode().strip()
+            return rev + ('-dirty' if dirty else '')
+        except Exception:
+            return None
+
+    def _dump_run_config(self, total_params, encoder_params):
+        """Persist every hyperparameter this run actually used, plus provenance.
+
+        `args` is only printed to stdout upstream, so a finished experiment folder
+        carries no record of what produced it beyond its own name.  This writes the
+        namespace *after* set_template has filled in the per-dataset defaults --
+        which is what a sweep needs in order to say which configuration produced
+        which number.  Read back by scripts/collect_hparams.py.
+        """
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        gpu = None
+        if torch.cuda.is_available():
+            try:
+                gpu = torch.cuda.get_device_name(0)
+            except Exception:
+                gpu = 'cuda (name unavailable)'
+        record = OrderedDict([
+            ('exp_name', os.path.basename(self.export_root)),
+            ('export_root', self.export_root),
+            ('started_at', time.strftime('%Y-%m-%dT%H:%M:%S')),
+            ('argv', sys.argv),
+            ('hparams', OrderedDict(sorted(vars(self.args).items()))),
+            ('model', OrderedDict([
+                ('total_parameters', total_params),
+                ('encoder_parameters', encoder_params),
+            ])),
+            ('data', OrderedDict([
+                ('train_batches', len(self.train_loader)),
+                ('val_batches', len(self.val_loader)),
+                ('test_batches', len(self.test_loader)),
+            ])),
+            ('env', OrderedDict([
+                ('git_commit', self._git_revision(root)),
+                ('ref_lrurec_commit', self._git_revision(os.path.join(root, '_ref_LRURec'))),
+                ('python', platform.python_version()),
+                ('torch', torch.__version__),
+                ('cuda', torch.version.cuda),
+                ('gpu', gpu),
+                ('device', str(self.device)),
+                ('hostname', socket.gethostname()),
+            ])),
+        ])
+        with open(os.path.join(self.export_root, 'run_config.json'), 'w') as f:
+            json.dump(record, f, indent=4, default=str)
+
+    def _dump_run_summary(self, test_metrics):
+        """What the run cost and where it peaked, alongside its test metrics."""
+        validations, best_val, best_at = [], None, None
+        path = os.path.join(self.export_root, 'val_metrics.jsonl')
+        if os.path.isfile(path):
+            with open(path) as f:
+                validations = [json.loads(line) for line in f if line.strip()]
+            scored = [r for r in validations if self.best_metric in r]
+            if scored:
+                best = max(scored, key=lambda r: r[self.best_metric])
+                best_val = OrderedDict(sorted(best.items()))
+                best_at = {'epoch': best.get('epoch'), 'accum_iter': best.get('accum_iter')}
+        summary = OrderedDict([
+            ('exp_name', os.path.basename(self.export_root)),
+            ('finished_at', time.strftime('%Y-%m-%dT%H:%M:%S')),
+            ('elapsed_seconds', round(time.time() - self._start_time, 1)),
+            ('epochs_completed', self._epochs_completed),
+            ('accum_iter', self._accum_iter),
+            ('validations', len(validations)),
+            ('early_stopped', self._early_stopped),
+            ('best_metric', self.best_metric),
+            ('best_val_at', best_at),
+            ('best_val_metrics', best_val),
+            ('test_metrics', OrderedDict(sorted(test_metrics.items()))),
+        ])
+        with open(os.path.join(self.export_root, 'run_summary.json'), 'w') as f:
+            json.dump(summary, f, indent=4, default=str)
 
     def validate(self, epoch, accum_iter):
         self.model.eval()
@@ -181,6 +282,7 @@ class BaseTrainer(metaclass=ABCMeta):
             print(average_metrics)
             with open(os.path.join(self.export_root, 'test_metrics.json'), 'w') as f:
                 json.dump(average_metrics, f, indent=4)
+            self._dump_run_summary(average_metrics)
         
         return average_metrics
     

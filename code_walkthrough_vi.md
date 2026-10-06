@@ -323,9 +323,14 @@ có bảng embedding item/position **riêng** (`Mc`, `Pc`, không share với em
 chính!), chạy qua 1 PFFN, rồi lấy tích vô hướng với embedding của **item nhãn đúng**
 (`labels`) để ra một số vô hướng `log(σ²)` mỗi vị trí:
 ```python
+z = self.pffn_block(xc)                # LN(Dropout(PFFN(xc) + xc)), theo eq. (20)
 mc = self.embedding.token(labels)      # Mc[i, :] -- baked vào bằng ground-truth label!
 return (mc * z).sum(-1)                # eq. (20): Mc[i,:]^T · LayerNorm(...)
 ```
+Nhánh này dùng `UncertaintyPFFNBlock`: cộng residual **trước** dropout để khớp
+công thức (20) được in. Backbone dùng `PFFNBlock`, cộng residual **sau** dropout
+theo sơ đồ Fig. 1. Fig. 2 vẽ thứ tự khác với công thức (20); hiện thực nhánh
+uncertainty chọn theo công thức.
 Lưu ý quan trọng: `log(σ²)` được tính bằng cách **dùng chính nhãn đúng** (`labels`) —
 điều này *chỉ hợp lệ khi training* (vì eval không có label để "gian lận"); ở
 `calculate_metrics` trong `trainer/slsrec.py`, nhánh uncertainty **không hề được gọi**

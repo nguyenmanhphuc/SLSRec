@@ -20,7 +20,7 @@ Equation map (paper -> code)
     (17) perturbation x_t -> U(0,1) w.p. theta        -> model/bdlru.py::BDLRU._perturb
     (18) L_Per = -Log(ybar_ui)                        -> trainer/slsrec.py
     (19) ytilde = Softmax((1/sigma^2) M x^(L))        -> trainer/slsrec.py (exact mode)
-    (20) Log(sigma^2) = Mc[i,:]' LN(Drop(PFFN(xc))+xc)-> UncertaintyEstimator
+    (20) Log(sigma^2) = Mc[i,:]' LN(Drop(PFFN(xc)+xc))-> UncertaintyEstimator
     (21) L_Unc = -Log(ytilde_ui)                      -> trainer/slsrec.py
     (22) L_Unc ~ (1/sigma^2) L_Rec + beta Log(sigma)  -> trainer/slsrec.py (approx mode)
     (23)/(24) L = (1 + alpha/sigma^2) L_Rec + L_Per   -> trainer/slsrec.py
@@ -32,6 +32,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from .adaptive_gate import AdaptiveGate, FusionGate, gate_statistics
 from .bdlru import BDLRU, CausalDepthwiseConv1d
 
 
@@ -133,6 +134,25 @@ class SGLRULayer(nn.Module):
         if self.sam_conv:
             self.conv1 = CausalDepthwiseConv1d(d, args.slsrec_d_conv, args.sam_conv_activation)
 
+        # --- research extension: adaptive gating (not in the SLSRec paper) --- #
+        # Only meaningful when both gate branches exist; otherwise there is
+        # nothing to mix and eq. (3) degenerates to a single term.
+        self.gate_mode = getattr(args, 'gate_mode', 'sum')
+        self.adaptive_gate = None
+        if self.gate_mode != 'sum' and self.use_sam_gate and self.sam_conv:
+            self.adaptive_gate = AdaptiveGate(
+                self.gate_mode, d_in=D, d=d,
+                granularity=getattr(args, 'gate_granularity', 'channel'),
+                hidden=getattr(args, 'gate_hidden', 0))
+
+        self.fusion_mode = getattr(args, 'fusion_mode', 'mul')
+        self.fusion_gate = None
+        if self.fusion_mode != 'mul':
+            self.fusion_gate = FusionGate(
+                getattr(args, 'fusion_source', 'token'), d_in=D, d=d,
+                granularity=getattr(args, 'gate_granularity', 'channel'),
+                hidden=getattr(args, 'gate_hidden', 0))
+
         self.conv2 = CausalDepthwiseConv1d(d, args.slsrec_d_conv, args.bdlru_conv_activation)
         if self.use_bdlru:
             self.bdlru = BDLRU(
@@ -149,13 +169,15 @@ class SGLRULayer(nn.Module):
         x = x * mask.unsqueeze(-1).to(x.dtype)  # keep padding inert at every layer
 
         l1 = self.w1(x)                                                        # (2)
-        gate_terms = []
-        if self.use_sam_gate:
-            gate_terms.append(self.sam(l1, mask))
-        if self.sam_conv:
-            gate_terms.append(self.conv1(l1, mask))
-        if gate_terms:
-            g = gate_terms[0] if len(gate_terms) == 1 else gate_terms[0] + gate_terms[1]  # (3)
+        sam_out = self.sam(l1, mask) if self.use_sam_gate else None
+        conv_out = self.conv1(l1, mask) if self.sam_conv else None
+
+        if self.adaptive_gate is not None:                     # axis A (extension)
+            g = self.adaptive_gate(x, sam_out, conv_out, mask)
+        elif sam_out is not None and conv_out is not None:
+            g = sam_out + conv_out                                             # (3)
+        elif sam_out is not None or conv_out is not None:
+            g = sam_out if sam_out is not None else conv_out
         else:
             g = F.silu(l1)  # RecBLR-style linear gate branch (ablation A)
 
@@ -164,7 +186,8 @@ class SGLRULayer(nn.Module):
         if self.use_bdlru:
             h = self.bdlru(h, mask, perturb=perturb)                           # (5) BD-LRU
 
-        l3 = self.w3(g * h)                                                    # (6)
+        fused = self.fusion_gate(x, g, h) if self.fusion_gate is not None else g * h
+        l3 = self.w3(fused)                                                    # (6)
         return self.layer_norm(self.dropout(l3) + x)                           # (7)
 
 
@@ -197,6 +220,16 @@ class PFFNBlock(nn.Module):
         return self.layer_norm(self.dropout(self.pffn(x)) + x)
 
 
+class UncertaintyPFFNBlock(PFFNBlock):
+    """LayerNorm(Dropout(PFFN(xc) + xc)) -- printed eq. (20).
+
+    Reuses the module names of PFFNBlock to keep existing checkpoints loadable.
+    """
+
+    def forward(self, x):
+        return self.layer_norm(self.dropout(self.pffn(x) + x))
+
+
 class SLSRecBlock(nn.Module):
     def __init__(self, args):
         super().__init__()
@@ -212,7 +245,7 @@ class SLSRecBlock(nn.Module):
 # Uncertainty estimator -- eq. (20)
 # --------------------------------------------------------------------------- #
 class UncertaintyEstimator(nn.Module):
-    """Log(sigma_u^2) = Mc[i,:]' LayerNorm(Dropout(PFFN(xc_u)) + xc_u).
+    """Log(sigma_u^2) = Mc[i,:]' LayerNorm(Dropout(PFFN(xc_u) + xc_u)).
 
     Runs on its own item/position embedding tables (Mc, Pc) and is purely
     position-wise, so it never mixes information across time steps.
@@ -221,7 +254,7 @@ class UncertaintyEstimator(nn.Module):
     def __init__(self, num_items, hidden, max_len, dropout):
         super().__init__()
         self.embedding = SLSRecEmbedding(num_items, hidden, max_len, dropout)
-        self.pffn_block = PFFNBlock(hidden, hidden * 4, dropout)
+        self.pffn_block = UncertaintyPFFNBlock(hidden, hidden * 4, dropout)
 
     def forward(self, seqs, labels):
         """seqs, labels: [B, L] -> log sigma^2: [B, L]."""
@@ -249,6 +282,16 @@ class SLSRecModel(nn.Module):
             if args.use_uncertainty else None
         )
         self.truncated_normal_init()
+        if getattr(args, 'gate_neutral_init', True):
+            self.reset_gates_neutral()
+
+    def reset_gates_neutral(self):
+        """Put every adaptive gate back at its neutral point *after* the global
+        truncated-normal init, so the model starts out bit-identical to the
+        original SLSRec layer (g = 0.5 -> eq. 3, a = 1 -> eq. 6)."""
+        for module in self.modules():
+            if isinstance(module, (AdaptiveGate, FusionGate)):
+                module.reset_neutral()
 
     def truncated_normal_init(self, mean=0, std=0.02, lower=-0.04, upper=0.04):
         """Identical to LRURec's initialisation (layer norms and the recurrence

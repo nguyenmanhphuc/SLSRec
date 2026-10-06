@@ -81,13 +81,37 @@ def set_template(args):
     set_slsrec_template(args, user_bert_dropout)
 
 
+# Per-dataset dropout optima, read off SLSRec Figs. 6 and 7 (see the docstring
+# of set_slsrec_template).  xlong is not in the paper; it keeps the 0.2 default.
+SLSREC_DROPOUT = {
+    'ml-1m': 0.2,
+    'beauty': 0.75,
+    'video': 0.6,
+    'sports': 0.75,
+    'steam': 0.2,
+}
+
+
 def set_slsrec_template(args, user_bert_dropout=None):
     """Per-dataset SLSRec hyperparameters from the SLSRec paper.
 
-    Dropout: 0.2 for dense datasets (ML-1M), 0.75 for sparse ones (Sec. IV-E1).
-    Perturbation rate theta = 0.1 (Sec. IV-E2, default for all datasets).
+    Dropout: read off the per-dataset optima in Figs. 6 and 7 (Recall@20 and
+    NDCG@20 vs dropout).  The prose in Sec. IV-E1 only names ML-1M (0.2) and
+    Sports (0.75); the figures give all five, and each optimum reproduces the
+    corresponding Table II entry:
+
+        ML-1M 0.2 | Beauty 0.75 | Video 0.6 | Sports 0.75 | Steam 0.2
+
+    Note Video: Sec. IV-A4 groups it with ML-1M and Steam by *search grid*
+    ({0, 0.2, 0.4, 0.6, 0.8}), which reads as "dense -> 0.2", but its curve
+    actually peaks at 0.6.  Reading 0.2 off the grid grouping gives ~0.158
+    Recall@20 in Fig. 6, while Table II reports 0.17353 -- the 0.6 point.
+
+    Perturbation rate theta = 0.1 for all datasets (Sec. IV-E2: "we use a
+    default perturbation rate of 0.1 in our experimental setup"; every Table II
+    entry matches the theta = 0.1 column of the theta grid).
     Uncertainty rate alpha = 0.01 for Beauty, 0.3 for every other dataset
-    (Sec. IV-E3).
+    (Sec. IV-E3, stated explicitly).
     """
     if args.model_code != 'slsrec':
         return
@@ -96,7 +120,7 @@ def set_slsrec_template(args, user_bert_dropout=None):
     if args.slsrec_dropout is not None:
         args.bert_dropout = args.slsrec_dropout
     elif user_bert_dropout is None:
-        args.bert_dropout = 0.75 if args.dataset_code in ('beauty', 'sports') else 0.2
+        args.bert_dropout = SLSREC_DROPOUT.get(args.dataset_code, 0.2)
 
 
 parser = argparse.ArgumentParser()
@@ -220,6 +244,26 @@ parser.add_argument('--uncertainty_loss', type=str, default='approx', choices=['
                     help='approx = eq. (22) (used by the paper for eq. (24)); exact = eq. (19)/(21)')
 parser.add_argument('--uncertainty_logvar_clamp', type=float, default=8.0,
                     help='numerical safety clamp on Log(sigma^2); 0 disables')
+
+################
+# Adaptive gating -- RESEARCH EXTENSION, not part of the SLSRec paper.
+# Defaults reproduce the paper exactly (gate_mode=sum, fusion_mode=mul).
+################
+# axis A: how G is composed from SAM and Conv1-D1  (replaces eq. 3)
+parser.add_argument('--gate_mode', type=str, default='sum',
+                    choices=['sum', 'scalar', 'channel', 'token', 'context'],
+                    help="sum = original eq.(3); scalar/channel = learned but static; "
+                         "token/context = input-dependent adaptive gate")
+# axis B: how strongly G gates H  (replaces eq. 6)
+parser.add_argument('--fusion_mode', type=str, default='mul', choices=['mul', 'adaptive'],
+                    help="mul = original eq.(6) G*H; adaptive = (1 + a*(G-1))*H")
+parser.add_argument('--fusion_source', type=str, default='token', choices=['token', 'context'])
+parser.add_argument('--gate_granularity', type=str, default='channel', choices=['scalar', 'channel'],
+                    help='one coefficient per position, or per position and channel')
+parser.add_argument('--gate_hidden', type=int, default=0,
+                    help='>0 turns the gate projection into a bottleneck MLP of this width')
+parser.add_argument('--gate_neutral_init', type=str2bool, default=True,
+                    help='start every gate at its neutral point so step 0 equals original SLSRec')
 
 # bookkeeping #
 parser.add_argument('--smoke_iters', type=int, default=10,
