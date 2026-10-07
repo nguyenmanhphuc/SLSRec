@@ -111,6 +111,12 @@ def audit(a):
     # ------------------------------------------------------------------ #
     # Sec. III-B -- architecture
     # ------------------------------------------------------------------ #
+    pos = getattr(a, 'slsrec_pos_emb', True)
+    add('MATCH' if pos else 'MISMATCH', 'III-B1', 'eq.(1) positional embedding P', 'E + P',
+        'E + P' if pos else 'E only (RecBLR eq. 1)', '' if pos else 'fix: --slsrec_pos_emb=true')
+    ffn = getattr(a, 'slsrec_ffn', 'geglu')
+    add('MATCH' if ffn == 'geglu' else 'MISMATCH', 'III-B3', 'eq.(13) PFFN',
+        '(GeLU(O W6) (*) O W7) W8', ffn, '' if ffn == 'geglu' else 'fix: --slsrec_ffn=geglu')
     add('MATCH' if a.slsrec_expand == 2 else 'MISMATCH', 'III-B2', 'd = 2D', 2, a.slsrec_expand)
     eq3 = a.use_sam_gate and a.sam_conv and a.gate_mode == 'sum'
     add('MATCH' if eq3 else 'MISMATCH', 'III-B2', 'eq.(3) G = SAM + Conv1-D1',

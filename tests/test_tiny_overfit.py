@@ -11,6 +11,10 @@ ABLATIONS = {
     # A: BD-LRU + CE (RecBLR-style gate branch, no SAM, no P, no U)
     'A_bdlru_ce': dict(use_sam_gate=False, sam_conv=False,
                        use_perturbation=False, use_uncertainty=False),
+    # A as RecBLR proper: no positional embedding, RecBLR FFN, RecBLR eq. (8)
+    'A_recblr': dict(use_sam_gate=False, sam_conv=False,
+                     use_perturbation=False, use_uncertainty=False,
+                     slsrec_pos_emb=False, slsrec_ffn='mlp', bdlru_c=1.0),
     # B: + self-attention gate
     'B_sam_gate': dict(use_perturbation=False, use_uncertainty=False),
     # C: + uniform perturbation

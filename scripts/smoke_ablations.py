@@ -29,6 +29,9 @@ from trainer.utils import absolute_recall_mrr_ndcg_for_ks, seed_everything
 ABLATIONS = {
     'A_bdlru_ce':     dict(use_sam_gate=False, sam_conv=False,
                            use_perturbation=False, use_uncertainty=False),
+    'A_recblr':       dict(use_sam_gate=False, sam_conv=False,
+                           use_perturbation=False, use_uncertainty=False,
+                           slsrec_pos_emb=False, slsrec_ffn='mlp', bdlru_c=1.0),
     'B_sam_gate':     dict(use_perturbation=False, use_uncertainty=False),
     'C_perturbation': dict(use_perturbation=True, use_uncertainty=False),
     'D_full_slsrec':  dict(use_perturbation=True, use_uncertainty=True),

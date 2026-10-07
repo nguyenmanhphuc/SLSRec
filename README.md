@@ -30,9 +30,22 @@ python train.py --dataset_code=ml-1m --model_code=slsrec --seed=42 --exp_name=D_
 | | Model | Flags |
 |---|---|---|
 | A | BD-LRU + CE | `--use_sam_gate=false --sam_conv=false --use_perturbation=false --use_uncertainty=false` |
+| A′ | RecBLR (CIKM'24) in this harness | A + `--slsrec_pos_emb=false --slsrec_ffn=mlp --bdlru_c=1` |
 | B | + self-attention gate | `--use_perturbation=false --use_uncertainty=false` |
 | C | + uniform perturbation | `--use_uncertainty=false` |
 | D | + Gibbs uncertainty (full SLSRec) | *(defaults)* |
+
+A keeps the SLSRec skeleton (positional embedding, GeGLU PFFN, `c = 8`). A′ is
+RecBLR as its own paper specifies it: no positional embedding (its eq. 1), a
+SiLU MLP feed-forward (its eq. 4) and `a_t = exp(-softplus(Λ) r_t)` (its eq. 8,
+which is eq. 11 with `c = 1`). SLSRec Table II puts RecBLR at ML-1M Recall@10
+0.34626, which is not RecBLR's own number (HR@10 0.3285, RecBole); A′ measures
+what RecBLR actually gets here.
+
+```bash
+bash scripts/run_ablation_a.sh                  # A, A', A' without weight decay x 3 seeds
+VARIANTS=recblr SEEDS=42 bash scripts/run_ablation_a.sh
+```
 
 ## Hyperparameter sweeps
 
@@ -129,6 +142,7 @@ scripts/smoke_ablations.py short real-data smoke test for all four ablations
 scripts/sweep_hparams.sh   hyperparameter grid runner (restartable, parallel)
 scripts/collect_hparams.py runs + their hyperparameters vs the published tables
 scripts/verify_lrurec.sh   LRURec baseline: this repo vs unmodified upstream
+scripts/run_ablation_a.sh  ablation A: SLSRec skeleton vs RecBLR proper, 3 seeds
 scripts/run_gate_sweep.sh  original gate vs adaptive gate A/B experiment
 scripts/run_gate_sweep.ps1 the same experiment on Windows PowerShell
 scripts/compare_gates.py   gate comparison table + what each gate learned

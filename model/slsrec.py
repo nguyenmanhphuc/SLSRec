@@ -24,6 +24,11 @@ Equation map (paper -> code)
     (21) L_Unc = -Log(ytilde_ui)                      -> trainer/slsrec.py
     (22) L_Unc ~ (1/sigma^2) L_Rec + beta Log(sigma)  -> trainer/slsrec.py (approx mode)
     (23)/(24) L = (1 + alpha/sigma^2) L_Rec + L_Per   -> trainer/slsrec.py
+
+RecBLR switches (Liu et al., CIKM'24) for ablation A -- not part of SLSRec:
+    --slsrec_pos_emb=false   drop P from (1); RecBLR eq. (1) has no positional embedding
+    --slsrec_ffn=mlp         replace (13) by RecBLR eq. (4): SiLU(H W1 + b1) W2 + b2
+    --bdlru_c=1              turn (11) into RecBLR eq. (8): exp(-softplus(Lambda) r_t), Lambda = -lambda
 """
 
 import math
@@ -47,21 +52,26 @@ class SLSRecEmbedding(nn.Module):
     P[max_len-1].  For the fixed-length batches the harness produces this is
     identical to plain left-to-right indexing, and it additionally makes every
     representation invariant to the amount of left padding.
+
+    ``use_position=False`` drops P altogether, i.e. LayerNorm(Dropout(E_u)) --
+    RecBLR's eq. (1), which relies on the recurrence for order information.
     """
 
-    def __init__(self, num_items, hidden, max_len, dropout):
+    def __init__(self, num_items, hidden, max_len, dropout, use_position=True):
         super().__init__()
         self.token = nn.Embedding(num_items + 1, hidden)
-        self.position = nn.Embedding(max_len, hidden)
+        self.position = nn.Embedding(max_len, hidden) if use_position else None
         self.layer_norm = nn.LayerNorm(hidden)
         self.dropout = nn.Dropout(dropout)
         self.max_len = max_len
 
     def forward(self, x):
         mask = x > 0                                       # padding item id is 0
-        length = x.size(1)
-        pos = torch.arange(self.max_len - length, self.max_len, device=x.device)
-        e = self.token(x) + self.position(pos).unsqueeze(0)
+        e = self.token(x)
+        if self.position is not None:
+            length = x.size(1)
+            pos = torch.arange(self.max_len - length, self.max_len, device=x.device)
+            e = e + self.position(pos).unsqueeze(0)
         e = self.layer_norm(self.dropout(e))
         return e * mask.unsqueeze(-1).to(e.dtype), mask
 
@@ -207,12 +217,32 @@ class PFFN(nn.Module):
         return self.w8(F.gelu(self.w6(x)) * self.w7(x))
 
 
-class PFFNBlock(nn.Module):
-    """X^(l) = LayerNorm(Dropout(PFFN(O)) + O) -- eq. (14)."""
+class RecBLRFFN(nn.Module):
+    """SiLU(H W1 + b1) W2 + b2 -- RecBLR eq. (4).  Only used with --slsrec_ffn=mlp."""
 
-    def __init__(self, d_model, d_ff, dropout):
+    def __init__(self, d_model, d_ff):
         super().__init__()
-        self.pffn = PFFN(d_model, d_ff)
+        self.fc1 = nn.Linear(d_model, d_ff, bias=True)
+        self.fc2 = nn.Linear(d_ff, d_model, bias=True)
+
+    def forward(self, x):
+        return self.fc2(F.silu(self.fc1(x)))
+
+
+class PFFNBlock(nn.Module):
+    """X^(l) = LayerNorm(Dropout(PFFN(O)) + O) -- eq. (14).
+
+    ``ffn='mlp'`` swaps eq. (13) for RecBLR's eq. (4); the dropout, residual and
+    layer norm around it are the same in both papers (RecBLR Fig. 2).
+    """
+
+    FFNS = {'geglu': PFFN, 'mlp': RecBLRFFN}
+
+    def __init__(self, d_model, d_ff, dropout, ffn='geglu'):
+        super().__init__()
+        if ffn not in self.FFNS:
+            raise ValueError(f'unknown slsrec_ffn: {ffn}')
+        self.pffn = self.FFNS[ffn](d_model, d_ff)
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -241,7 +271,8 @@ class SLSRecBlock(nn.Module):
         super().__init__()
         D = args.bert_hidden_units
         self.sg_lru = SGLRULayer(args)
-        self.pffn_block = PFFNBlock(D, D * 4, args.bert_dropout)
+        self.pffn_block = PFFNBlock(D, D * 4, args.bert_dropout,
+                                    ffn=getattr(args, 'slsrec_ffn', 'geglu'))
 
     def forward(self, x, mask, perturb=False):
         return self.pffn_block(self.sg_lru(x, mask, perturb=perturb))
@@ -286,7 +317,8 @@ class SLSRecModel(nn.Module):
         super().__init__()
         self.args = args
         D = args.bert_hidden_units
-        self.embedding = SLSRecEmbedding(args.num_items, D, args.bert_max_len, args.bert_dropout)
+        self.embedding = SLSRecEmbedding(args.num_items, D, args.bert_max_len, args.bert_dropout,
+                                         use_position=getattr(args, 'slsrec_pos_emb', True))
         self.blocks = nn.ModuleList([SLSRecBlock(args) for _ in range(args.bert_num_blocks)])
         self.use_item_bias = args.use_item_bias
         if self.use_item_bias:

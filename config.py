@@ -215,6 +215,11 @@ parser.add_argument('--scan_impl', type=str, default='torch',
                     choices=['torch', 'sequential', 'triton'])
 parser.add_argument('--use_item_bias', type=str2bool, default=False,
                     help='add a per-item bias to the logits (LRURec does; eq. (15) does not)')
+parser.add_argument('--slsrec_pos_emb', type=str2bool, default=True,
+                    help='learnable positional embedding P in eq. (1); RecBLR (its eq. 1) has none')
+parser.add_argument('--slsrec_ffn', type=str, default='geglu', choices=['geglu', 'mlp'],
+                    help='geglu = eq. (13) (GeLU(O W6) * O W7) W8; '
+                         'mlp = RecBLR eq. (4) SiLU(H W1 + b1) W2 + b2')
 
 # self-attention gate, eq. (3)/(8) #
 parser.add_argument('--use_sam_gate', type=str2bool, default=True,
@@ -228,7 +233,9 @@ parser.add_argument('--sam_attn_dropout', type=float, default=0.0)
 
 # BD-LRU, eq. (9)-(12) #
 parser.add_argument('--use_bdlru', type=str2bool, default=True)
-parser.add_argument('--bdlru_c', type=float, default=8.0, help='scalar c in eq. (11)')
+parser.add_argument('--bdlru_c', type=float, default=8.0,
+                    help='scalar c in eq. (11); c=1 is RecBLR eq. (8), '
+                         'exp(-softplus(Lambda) r_t) with Lambda = -lambda')
 parser.add_argument('--bdlru_r_min', type=float, default=0.9)
 parser.add_argument('--bdlru_r_max', type=float, default=0.999)
 parser.add_argument('--bdlru_lambda_init', type=str, default='linspace',

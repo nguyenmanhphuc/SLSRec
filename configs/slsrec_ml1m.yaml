@@ -46,6 +46,8 @@ architecture:
   slsrec_d_conv: 4             # causal depth-wise conv kernel (RecBLR)
   scan_impl: torch             # portable parallel scan; 'triton' needs CUDA+triton
   use_item_bias: false         # eq. (15) has no item bias
+  slsrec_pos_emb: true         # P in eq. (1); false = RecBLR eq. (1)
+  slsrec_ffn: geglu            # eq. (13); mlp = RecBLR eq. (4)
 
 self_attention_gate:           # eq. (3)/(8)
   use_sam_gate: true
@@ -82,6 +84,11 @@ commands:
     python train.py --dataset_code=ml-1m --model_code=slsrec --seed=42
     --use_sam_gate=false --sam_conv=false
     --use_perturbation=false --use_uncertainty=false --exp_name=A_bdlru_ce
+  A_recblr: >-
+    python train.py --dataset_code=ml-1m --model_code=slsrec --seed=42
+    --use_sam_gate=false --sam_conv=false
+    --use_perturbation=false --use_uncertainty=false
+    --slsrec_pos_emb=false --slsrec_ffn=mlp --bdlru_c=1 --exp_name=A_recblr
   B_sam_gate: >-
     python train.py --dataset_code=ml-1m --model_code=slsrec --seed=42
     --use_perturbation=false --use_uncertainty=false --exp_name=B_sam_gate
