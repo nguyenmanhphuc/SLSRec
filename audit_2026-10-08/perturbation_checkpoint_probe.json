@@ -1,0 +1,750 @@
+{
+  "method": "Eval mode disables dropout. Random 128 train windows seed 42. Output seeds 0,1,2. Gradients use first 16 sampled windows and seeds 0,1. No optimizer steps.",
+  "python": "3.10.18",
+  "torch": "2.1.0+cu118",
+  "dataset_sha256": "e3ed8339a0f7a63d9612a08347161ca209610d416b526c489e10dec627644d3d",
+  "source_sha256": {
+    "model/slsrec.py": "43cfc347c47fd5317b3b0cc04a9f3b9ace2f8fa8268f3d500d6f218bd94d160d",
+    "model/bdlru.py": "1162ac83e1fe77ec8dca3ea75d8807bd0d4bac52b8a0778b3b6f86bb1b11764d",
+    "trainer/slsrec.py": "cfa818f75b6bd74a2c96a0e4284db99d1821cdf1830a8596054980fbc7ac583a"
+  },
+  "limitations": [
+    "Checkpoint-local sensitivity does not prove causality for generalization.",
+    "Training windows, not held-out evaluation; top10 overlap is a sensitivity metric.",
+    "Gradient sample has 16 windows; dropout is disabled to isolate perturbation."
+  ],
+  "C_perturbation_ml-1m_seed42": {
+    "checkpoint_sha256": "97e12ee3c05466eb602ff63051d5dbedee9e9c8e97d00cf8fc6ef28da43afad8",
+    "sampled_train_indices": [
+      5238,
+      912,
+      204,
+      6074,
+      2253,
+      2006,
+      1828,
+      1143,
+      6033,
+      839,
+      5543,
+      6067,
+      4467,
+      712,
+      4837,
+      3456,
+      260,
+      244,
+      767,
+      1791,
+      1905,
+      4139,
+      4931,
+      217,
+      4597,
+      1628,
+      5865,
+      5323,
+      5745,
+      4464,
+      3436,
+      1805,
+      3679,
+      4827,
+      2278,
+      6630,
+      53,
+      6216,
+      6601,
+      1307,
+      5719,
+      3462,
+      2787,
+      2276,
+      1273,
+      1763,
+      6254,
+      2757,
+      837,
+      759,
+      3112,
+      792,
+      2940,
+      6942,
+      2817,
+      4945,
+      2166,
+      6611,
+      355,
+      5977,
+      3763,
+      4392,
+      1022,
+      3100,
+      645,
+      4522,
+      2401,
+      6794,
+      5149,
+      5066,
+      7059,
+      2962,
+      4729,
+      1575,
+      5771,
+      569,
+      375,
+      5417,
+      1866,
+      6332,
+      2370,
+      653,
+      7006,
+      1907,
+      827,
+      3113,
+      2277,
+      3714,
+      5207,
+      6833,
+      2988,
+      1332,
+      3032,
+      2910,
+      1716,
+      5490,
+      2187,
+      5749,
+      5599,
+      5308,
+      584,
+      4990,
+      5201,
+      1401,
+      4375,
+      5973,
+      2005,
+      1338,
+      3786,
+      3108,
+      2211,
+      5242,
+      5637,
+      4562,
+      1799,
+      5608,
+      2656,
+      6904,
+      6294,
+      6356,
+      458,
+      1876,
+      6732,
+      262,
+      6594,
+      2584,
+      3286,
+      2193
+    ],
+    "output": {
+      "0.1": [
+        {
+          "seed": 0,
+          "valid_positions": 15257,
+          "ce_clean": 4.771511882225167,
+          "ce_dirty": 4.778607706196336,
+          "KL_clean_to_dirty": 0.0075579879089663505,
+          "relative_logits_l2": 0.04107179056243839,
+          "top10_overlap_last": 0.9367187400348485
+        },
+        {
+          "seed": 1,
+          "valid_positions": 15257,
+          "ce_clean": 4.771511882225167,
+          "ce_dirty": 4.779035292329955,
+          "KL_clean_to_dirty": 0.007314771454823535,
+          "relative_logits_l2": 0.039793749800893397,
+          "top10_overlap_last": 0.9453124930150807
+        },
+        {
+          "seed": 2,
+          "valid_positions": 15257,
+          "ce_clean": 4.771511882225167,
+          "ce_dirty": 4.781022965380645,
+          "KL_clean_to_dirty": 0.007466340976046759,
+          "relative_logits_l2": 0.040785798745332266,
+          "top10_overlap_last": 0.9320312421768904
+        }
+      ],
+      "1.0": [
+        {
+          "seed": 0,
+          "valid_positions": 15257,
+          "ce_clean": 4.771511882225167,
+          "ce_dirty": 5.917408588322163,
+          "KL_clean_to_dirty": 1.0858204742789683,
+          "relative_logits_l2": 0.4781056064267212,
+          "top10_overlap_last": 0.38125000370200723
+        },
+        {
+          "seed": 1,
+          "valid_positions": 15257,
+          "ce_clean": 4.771511882225167,
+          "ce_dirty": 5.9182898756513405,
+          "KL_clean_to_dirty": 1.084560082500553,
+          "relative_logits_l2": 0.4777070660306993,
+          "top10_overlap_last": 0.38281250378349796
+        },
+        {
+          "seed": 2,
+          "valid_positions": 15257,
+          "ce_clean": 4.771511882225167,
+          "ce_dirty": 5.9206582333365425,
+          "KL_clean_to_dirty": 1.0880653174823443,
+          "relative_logits_l2": 0.47856574216351344,
+          "top10_overlap_last": 0.37656250409781933
+        }
+      ]
+    },
+    "gradient": {
+      "0.1": [
+        {
+          "seed": 0,
+          "L_rec": 4.77073860168457,
+          "L_per": 4.784109115600586,
+          "valid_positions": 1563,
+          "groups": {
+            "all": {
+              "cosine": 0.9860911136623146,
+              "clean_grad_norm": 0.9097234682914773,
+              "dirty_grad_norm": 0.917918080218832
+            },
+            "embedding": {
+              "cosine": 0.9911443380655239,
+              "clean_grad_norm": 0.40239672303422863,
+              "dirty_grad_norm": 0.4029951583137036
+            },
+            "sam": {
+              "cosine": 0.9827755368615441,
+              "clean_grad_norm": 0.2829575297916471,
+              "dirty_grad_norm": 0.2849288778592432
+            },
+            "conv2_bdlru": {
+              "cosine": 0.973009365109378,
+              "clean_grad_norm": 0.2448652571430861,
+              "dirty_grad_norm": 0.24928342243041057
+            },
+            "w3": {
+              "cosine": 0.9861190320029037,
+              "clean_grad_norm": 0.30610407444204196,
+              "dirty_grad_norm": 0.3085494420830799
+            },
+            "pffn": {
+              "cosine": 0.9896767584593792,
+              "clean_grad_norm": 0.5467523754531834,
+              "dirty_grad_norm": 0.5541830027409271
+            }
+          }
+        },
+        {
+          "seed": 1,
+          "L_rec": 4.77073860168457,
+          "L_per": 4.777926921844482,
+          "valid_positions": 1563,
+          "groups": {
+            "all": {
+              "cosine": 0.9893796832600023,
+              "clean_grad_norm": 0.9097234682914773,
+              "dirty_grad_norm": 0.908110139573706
+            },
+            "embedding": {
+              "cosine": 0.9929596944227865,
+              "clean_grad_norm": 0.40239672303422863,
+              "dirty_grad_norm": 0.40170945734014984
+            },
+            "sam": {
+              "cosine": 0.987792426557192,
+              "clean_grad_norm": 0.2829575297916471,
+              "dirty_grad_norm": 0.2841213624150948
+            },
+            "conv2_bdlru": {
+              "cosine": 0.9768586325577453,
+              "clean_grad_norm": 0.2448652571430861,
+              "dirty_grad_norm": 0.24230235891397095
+            },
+            "w3": {
+              "cosine": 0.9888639497760139,
+              "clean_grad_norm": 0.30610407444204196,
+              "dirty_grad_norm": 0.30470431664256925
+            },
+            "pffn": {
+              "cosine": 0.992647108150105,
+              "clean_grad_norm": 0.5467523754531834,
+              "dirty_grad_norm": 0.5467723847552013
+            }
+          }
+        }
+      ],
+      "1.0": [
+        {
+          "seed": 0,
+          "L_rec": 4.77073860168457,
+          "L_per": 5.865000247955322,
+          "valid_positions": 1563,
+          "groups": {
+            "all": {
+              "cosine": 0.2602037804481755,
+              "clean_grad_norm": 0.9097234682914773,
+              "dirty_grad_norm": 3.4653919925923526
+            },
+            "embedding": {
+              "cosine": 0.4786927115071547,
+              "clean_grad_norm": 0.40239672303422863,
+              "dirty_grad_norm": 0.6018959776086112
+            },
+            "sam": {
+              "cosine": 0.2819060727230538,
+              "clean_grad_norm": 0.2829575297916471,
+              "dirty_grad_norm": 1.6718179881600475
+            },
+            "conv2_bdlru": {
+              "cosine": 0.09390982965544617,
+              "clean_grad_norm": 0.2448652571430861,
+              "dirty_grad_norm": 0.8532461566126633
+            },
+            "w3": {
+              "cosine": 0.3731646940918714,
+              "clean_grad_norm": 0.30610407444204196,
+              "dirty_grad_norm": 1.724497089424384
+            },
+            "pffn": {
+              "cosine": 0.362363600546871,
+              "clean_grad_norm": 0.5467523754531834,
+              "dirty_grad_norm": 1.4356576866650361
+            }
+          }
+        },
+        {
+          "seed": 1,
+          "L_rec": 4.77073860168457,
+          "L_per": 5.850399017333984,
+          "valid_positions": 1563,
+          "groups": {
+            "all": {
+              "cosine": 0.2599854020901298,
+              "clean_grad_norm": 0.9097234682914773,
+              "dirty_grad_norm": 3.433564890101391
+            },
+            "embedding": {
+              "cosine": 0.4808417385607208,
+              "clean_grad_norm": 0.40239672303422863,
+              "dirty_grad_norm": 0.6043839804597054
+            },
+            "sam": {
+              "cosine": 0.27817472236191887,
+              "clean_grad_norm": 0.2829575297916471,
+              "dirty_grad_norm": 1.6549115726441737
+            },
+            "conv2_bdlru": {
+              "cosine": 0.09471800683871034,
+              "clean_grad_norm": 0.2448652571430861,
+              "dirty_grad_norm": 0.8520636992377032
+            },
+            "w3": {
+              "cosine": 0.36993044613709936,
+              "clean_grad_norm": 0.30610407444204196,
+              "dirty_grad_norm": 1.7119220629003
+            },
+            "pffn": {
+              "cosine": 0.36028068372714156,
+              "clean_grad_norm": 0.5467523754531834,
+              "dirty_grad_norm": 1.4301644049592819
+            }
+          }
+        }
+      ]
+    },
+    "gates": [
+      {
+        "layer": 0,
+        "replaced_positions": 1494,
+        "mean_i_uniform": 0.24008302931166398,
+        "mean_i_original_selected": 0.38006010144909064,
+        "mean_a_uniform": 0.9660270313022925,
+        "mean_a_original_selected": 0.8784006187714726,
+        "mean_input_term_norm_uniform": 0.8360250771763813,
+        "mean_input_term_norm_original_selected": 1.656585254184054,
+        "pre_replacement_input_mean": 0.38164917931313924,
+        "pre_replacement_input_std": 0.7539427792729346
+      },
+      {
+        "layer": 1,
+        "replaced_positions": 1557,
+        "mean_i_uniform": 0.15953132810696777,
+        "mean_i_original_selected": 0.28957829999096824,
+        "mean_a_uniform": 0.9781713246839814,
+        "mean_a_original_selected": 0.919893711901048,
+        "mean_input_term_norm_uniform": 0.5390371483108825,
+        "mean_input_term_norm_original_selected": 0.901533897365602,
+        "pre_replacement_input_mean": 0.3405305013106819,
+        "pre_replacement_input_std": 0.6455954089103423
+      }
+    ],
+    "zero_H": {
+      "ce_clean": 4.771511882225167,
+      "ce_zero_H": 6.844988673231959,
+      "top10_overlap": 0.14296875236323103
+    },
+    "gates_note": "Compare original pre-replacement input and fresh iid U(0,1) at exactly the sampled replacement locations. Layer 2 pre-replacement inputs include upstream layer 1 perturbation. This is a gate counterfactual, not proof of a noise classifier."
+  },
+  "C_perturbation_theta0_ml-1m_seed42": {
+    "checkpoint_sha256": "3c5622ed41f76e78594cb08296346b185dddbe58a2eef574a9105830c01907ee",
+    "sampled_train_indices": [
+      5238,
+      912,
+      204,
+      6074,
+      2253,
+      2006,
+      1828,
+      1143,
+      6033,
+      839,
+      5543,
+      6067,
+      4467,
+      712,
+      4837,
+      3456,
+      260,
+      244,
+      767,
+      1791,
+      1905,
+      4139,
+      4931,
+      217,
+      4597,
+      1628,
+      5865,
+      5323,
+      5745,
+      4464,
+      3436,
+      1805,
+      3679,
+      4827,
+      2278,
+      6630,
+      53,
+      6216,
+      6601,
+      1307,
+      5719,
+      3462,
+      2787,
+      2276,
+      1273,
+      1763,
+      6254,
+      2757,
+      837,
+      759,
+      3112,
+      792,
+      2940,
+      6942,
+      2817,
+      4945,
+      2166,
+      6611,
+      355,
+      5977,
+      3763,
+      4392,
+      1022,
+      3100,
+      645,
+      4522,
+      2401,
+      6794,
+      5149,
+      5066,
+      7059,
+      2962,
+      4729,
+      1575,
+      5771,
+      569,
+      375,
+      5417,
+      1866,
+      6332,
+      2370,
+      653,
+      7006,
+      1907,
+      827,
+      3113,
+      2277,
+      3714,
+      5207,
+      6833,
+      2988,
+      1332,
+      3032,
+      2910,
+      1716,
+      5490,
+      2187,
+      5749,
+      5599,
+      5308,
+      584,
+      4990,
+      5201,
+      1401,
+      4375,
+      5973,
+      2005,
+      1338,
+      3786,
+      3108,
+      2211,
+      5242,
+      5637,
+      4562,
+      1799,
+      5608,
+      2656,
+      6904,
+      6294,
+      6356,
+      458,
+      1876,
+      6732,
+      262,
+      6594,
+      2584,
+      3286,
+      2193
+    ],
+    "output": {
+      "0.1": [
+        {
+          "seed": 0,
+          "valid_positions": 15257,
+          "ce_clean": 4.836791792164048,
+          "ce_dirty": 4.905226007938979,
+          "KL_clean_to_dirty": 0.06345395884976722,
+          "relative_logits_l2": 0.12700400974060333,
+          "top10_overlap_last": 0.8281249974388629
+        },
+        {
+          "seed": 1,
+          "valid_positions": 15257,
+          "ce_clean": 4.836791792164048,
+          "ce_dirty": 4.8997737846767055,
+          "KL_clean_to_dirty": 0.05871876003217625,
+          "relative_logits_l2": 0.12145511283934698,
+          "top10_overlap_last": 0.8499999919440597
+        },
+        {
+          "seed": 2,
+          "valid_positions": 15257,
+          "ce_clean": 4.836791792164048,
+          "ce_dirty": 4.908377785478592,
+          "KL_clean_to_dirty": 0.06461114452747356,
+          "relative_logits_l2": 0.1277382792440485,
+          "top10_overlap_last": 0.8304687454365194
+        }
+      ],
+      "1.0": [
+        {
+          "seed": 0,
+          "valid_positions": 15257,
+          "ce_clean": 4.836791792164048,
+          "ce_dirty": 9.967292069060512,
+          "KL_clean_to_dirty": 5.135747692145409,
+          "relative_logits_l2": 1.0324755075146328,
+          "top10_overlap_last": 0.04296875069849193
+        },
+        {
+          "seed": 1,
+          "valid_positions": 15257,
+          "ce_clean": 4.836791792164048,
+          "ce_dirty": 9.959176013469227,
+          "KL_clean_to_dirty": 5.128357513661761,
+          "relative_logits_l2": 1.031279606294019,
+          "top10_overlap_last": 0.04218750074505806
+        },
+        {
+          "seed": 2,
+          "valid_positions": 15257,
+          "ce_clean": 4.836791792164048,
+          "ce_dirty": 9.95124381943534,
+          "KL_clean_to_dirty": 5.125224858364193,
+          "relative_logits_l2": 1.0308910516278305,
+          "top10_overlap_last": 0.0500000009778887
+        }
+      ]
+    },
+    "gradient": {
+      "0.1": [
+        {
+          "seed": 0,
+          "L_rec": 4.844743251800537,
+          "L_per": 4.917654991149902,
+          "valid_positions": 1563,
+          "groups": {
+            "all": {
+              "cosine": 0.9119217115060125,
+              "clean_grad_norm": 1.0118098172642696,
+              "dirty_grad_norm": 1.2917010573615921
+            },
+            "embedding": {
+              "cosine": 0.9529631220459546,
+              "clean_grad_norm": 0.41697843688654124,
+              "dirty_grad_norm": 0.4455743822719862
+            },
+            "sam": {
+              "cosine": 0.888700783987331,
+              "clean_grad_norm": 0.31399523193463486,
+              "dirty_grad_norm": 0.41664527551619734
+            },
+            "conv2_bdlru": {
+              "cosine": 0.9678438600276186,
+              "clean_grad_norm": 0.4430585536208756,
+              "dirty_grad_norm": 0.6750579248965689
+            },
+            "w3": {
+              "cosine": 0.8583515670410958,
+              "clean_grad_norm": 0.31640706238818955,
+              "dirty_grad_norm": 0.41957093755709046
+            },
+            "pffn": {
+              "cosine": 0.9170368127306384,
+              "clean_grad_norm": 0.5408080687106451,
+              "dirty_grad_norm": 0.6258873411460019
+            }
+          }
+        },
+        {
+          "seed": 1,
+          "L_rec": 4.844743251800537,
+          "L_per": 4.901482105255127,
+          "valid_positions": 1563,
+          "groups": {
+            "all": {
+              "cosine": 0.9057450369959297,
+              "clean_grad_norm": 1.0118098172642696,
+              "dirty_grad_norm": 1.2421510567662115
+            },
+            "embedding": {
+              "cosine": 0.9535962299953493,
+              "clean_grad_norm": 0.41697843688654124,
+              "dirty_grad_norm": 0.44124999250256297
+            },
+            "sam": {
+              "cosine": 0.8697814171968526,
+              "clean_grad_norm": 0.31399523193463486,
+              "dirty_grad_norm": 0.4177499651389682
+            },
+            "conv2_bdlru": {
+              "cosine": 0.968068968878574,
+              "clean_grad_norm": 0.4430585536208756,
+              "dirty_grad_norm": 0.6021610768899377
+            },
+            "w3": {
+              "cosine": 0.843683404575683,
+              "clean_grad_norm": 0.31640706238818955,
+              "dirty_grad_norm": 0.40837490309520585
+            },
+            "pffn": {
+              "cosine": 0.9083956001053289,
+              "clean_grad_norm": 0.5408080687106451,
+              "dirty_grad_norm": 0.6154318232493204
+            }
+          }
+        }
+      ],
+      "1.0": [
+        {
+          "seed": 0,
+          "L_rec": 4.844743251800537,
+          "L_per": 9.607112884521484,
+          "valid_positions": 1563,
+          "groups": {
+            "all": {
+              "cosine": 0.032115144213325175,
+              "clean_grad_norm": 1.0118098172642696,
+              "dirty_grad_norm": 7.820502786436339
+            },
+            "embedding": {
+              "cosine": 0.0677430354712859,
+              "clean_grad_norm": 0.41697843688654124,
+              "dirty_grad_norm": 1.4895883793650926
+            },
+            "sam": {
+              "cosine": 0.048275181769582974,
+              "clean_grad_norm": 0.31399523193463486,
+              "dirty_grad_norm": 2.9735849498786737
+            },
+            "conv2_bdlru": {
+              "cosine": 0.004182551532872803,
+              "clean_grad_norm": 0.4430585536208756,
+              "dirty_grad_norm": 1.7938190134367886
+            },
+            "w3": {
+              "cosine": 0.005267284496248013,
+              "clean_grad_norm": 0.31640706238818955,
+              "dirty_grad_norm": 4.364147530163388
+            },
+            "pffn": {
+              "cosine": 0.05550002833009149,
+              "clean_grad_norm": 0.5408080687106451,
+              "dirty_grad_norm": 3.7509588078776583
+            }
+          }
+        },
+        {
+          "seed": 1,
+          "L_rec": 4.844743251800537,
+          "L_per": 9.632488250732422,
+          "valid_positions": 1563,
+          "groups": {
+            "all": {
+              "cosine": 0.031752718641781474,
+              "clean_grad_norm": 1.0118098172642696,
+              "dirty_grad_norm": 7.805035887876403
+            },
+            "embedding": {
+              "cosine": 0.06718093153128725,
+              "clean_grad_norm": 0.41697843688654124,
+              "dirty_grad_norm": 1.503411130403315
+            },
+            "sam": {
+              "cosine": 0.04908223474501594,
+              "clean_grad_norm": 0.31399523193463486,
+              "dirty_grad_norm": 2.9613413595068145
+            },
+            "conv2_bdlru": {
+              "cosine": 0.0037002401634085172,
+              "clean_grad_norm": 0.4430585536208756,
+              "dirty_grad_norm": 1.798894232778801
+            },
+            "w3": {
+              "cosine": 0.0048175820079596225,
+              "clean_grad_norm": 0.31640706238818955,
+              "dirty_grad_norm": 4.328449132123033
+            },
+            "pffn": {
+              "cosine": 0.05438693403452882,
+              "clean_grad_norm": 0.5408080687106451,
+              "dirty_grad_norm": 3.7769258123947567
+            }
+          }
+        }
+      ]
+    }
+  }
+}
