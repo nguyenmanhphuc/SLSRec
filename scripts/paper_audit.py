@@ -131,7 +131,8 @@ def audit(a):
         add('AMBIGUOUS', 'III-B2', 'a_t init range', '"a_t uniform in [0.9, 0.999] as in [17],[35]"',
             f'base coefficient [{a.bdlru_r_min}, {a.bdlru_r_max}] at r_t=1 ({a.bdlru_lambda_init})',
             'realised a_t at init is ~[0.949, 0.9995] because r_t ~ 0.5. "as in [17]" '
-            'points to RecBLR, which calibrates at r_t=1 with linspace -- what the code does. '
+            'points to RecBLR, which also calibrates at r_t=1 but spaces Lambda (not a) '
+            'linearly, so its a_t pile up near 0.999 (median ~0.99 vs ~0.95 here). '
             'Low impact: lambda is learned (it shrank ~19% in the ML-1M run)')
     else:
         add('MISMATCH', 'III-B2', 'a_t init range', '[0.9, 0.999]',
@@ -165,6 +166,11 @@ def audit(a):
         'eq.(15) none; LRURec eq.(10) has b_o', f'use_item_bias={a.use_item_bias}',
         'SLSRec says it is built on the LRURec repo, whose head has the bias. '
         f'alt: --use_item_bias={str(not a.use_item_bias).lower()}')
+    pffn_bias = getattr(a, 'pffn_bias', False)
+    add('AMBIGUOUS', 'III-B3', 'PFFN biases (W6, W7, W8)',
+        'eq.(13)/(20) none, although eq.(2)/(4)/(6) print b1-b3', f'pffn_bias={pffn_bias}',
+        'the LRURec and RecBLR FFNs both have biases. '
+        f'alt: --pffn_bias={str(not pffn_bias).lower()}')
 
     # ------------------------------------------------------------------ #
     # Added / structural

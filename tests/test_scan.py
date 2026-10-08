@@ -123,6 +123,25 @@ def test_sam_disabled_reduces_to_bdlru_checkpoint():
     assert any('conv2' in n for n in names)
 
 
+@pytest.mark.parametrize('use_uncertainty', [False, True])
+def test_pffn_bias_switch(use_uncertainty):
+    """--pffn_bias adds exactly the W6/W7/W8 biases of every PFFN (eq. 13 prints
+    none); the default stays bias-free."""
+    def pffns(model):
+        return [m for m in model.modules() if type(m).__name__ == 'PFFN']
+
+    off = SLSRec(make_args(use_uncertainty=use_uncertainty))
+    on = SLSRec(make_args(use_uncertainty=use_uncertainty, pffn_bias=True))
+    assert all(l.bias is None for p in pffns(off) for l in (p.w6, p.w7, p.w8))
+    assert all(l.bias is not None for p in pffns(on) for l in (p.w6, p.w7, p.w8))
+
+    D = make_args().bert_hidden_units
+    n_pffn = len(pffns(on))
+    assert n_pffn == make_args().bert_num_blocks + (1 if use_uncertainty else 0)
+    extra = sum(p.numel() for p in on.parameters()) - sum(p.numel() for p in off.parameters())
+    assert extra == n_pffn * (4 * D + 4 * D + D)
+
+
 def test_recurrence_is_stable():
     """a_t must live in (0, 1] so the recurrence cannot blow up."""
     seed_all()
