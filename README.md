@@ -34,6 +34,69 @@ python train.py --dataset_code=ml-1m --model_code=slsrec --seed=42 --exp_name=D_
 | C | + uniform perturbation | `--use_uncertainty=false` |
 | D | + Gibbs uncertainty (full SLSRec) | *(defaults)* |
 
+## RecBLR baseline and one-command variant comparison
+
+`--model_code=recblr` trains the official RecBLR architecture
+(`model/recblr.py`, a line-for-line port of chengkai-liu/RecBLR `RecBLR.py`,
+numerically identical to it) inside this harness, on the same schedule as SLSRec
+-- which is how the SLSRec paper produced its RecBLR column (Table II).
+
+```bash
+python train.py --dataset_code=ml-1m --model_code=recblr --seed=42
+```
+
+`scripts/run_variants.py` trains every variant for each seed and prints one table:
+test metrics next to the paper's Table II/III number, the change relative to full
+SLSRec next to the paper's own "drop percentage", and training diagnostics that
+show whether perturbation (`L_per-L_rec`) and uncertainty (`a*L_unc/L_rec`) are
+doing anything.
+
+```bash
+python scripts/run_variants.py                        # recblr + Table III ablations + slsrec, seed 42
+python scripts/run_variants.py --variants recblr      # RecBLR only
+python scripts/run_variants.py --seeds 42 43 44
+python scripts/run_variants.py --quick                # 10-epoch trial of the whole pipeline
+python scripts/run_variants.py --list                 # all variants and their flags
+python scripts/run_variants.py --collect_only --include_legacy   # table from runs already on disk
+python scripts/run_variants.py --variants wo_pu p_layer --reuse_legacy   # train only what no older run covers
+python scripts/run_variants.py -- --num_workers=2     # flags after -- go to every train.py
+```
+
+Finished runs are skipped, so an interrupted sweep resumes. Tables are written to
+`experiments/compare/<prefix>_<dataset>.{md,csv,json}`. Why the current results
+fall short of the paper: [`gap_analysis_vi.md`](gap_analysis_vi.md).
+
+### Alternative readings of perturbation (P) and uncertainty (U)
+
+On ML-1M both terms are inert as currently read (see the gap analysis). The paper
+leaves room for other readings; each is a flag whose default is the original
+behaviour (bit-for-bit, checked against the previous commit):
+
+| flag | values (default first) | reading |
+|---|---|---|
+| `--perturbation_site` | `bdlru`, `bdlru_conv`, `layer`, `embedding` | where eq. (17) replaces x_t: BD-LRU input / L2 before Conv1-D2 / each layer input X^(l-1) (gate, recurrence and residual) / X^(0) once |
+| `--perturbation_noise` | `uniform`, `shuffle` | U(low, high) / the vector of a random real position in another sequence |
+| `--perturbation_granularity` | `position`, `element` | whole vector per step / each component independently |
+| `--perturbation_gates` | `perturbed`, `clean` | r_t, i_t of eq. (9)/(10) see the replaced vector / see the clean x_t, so the noise cannot be gated out (site `bdlru`) |
+| `--uncertainty_granularity` | `position`, `sequence`, `global` | sigma per prefix / one sigma_u per sequence from its last row (Sec. III-C2 wording) / one global sigma ([45]) |
+| `--uncertainty_weight_norm` | `none`, `batch` | batch: 1/sigma^2 normalised to mean 1, so U cannot switch itself off (control) |
+| `--uncertainty_beta` | `0`, any > 0 | the Log(sigma) penalty of eq. (22) the paper drops |
+
+```bash
+python scripts/run_variants.py --variants @p   # each P reading with U off, vs wo_pu and wo_u
+python scripts/run_variants.py --variants @u   # each U reading with P off, vs wo_pu and wo_p
+```
+
+`scripts/diagnose_pu.py` measures on trained checkpoints *why* a reading acts or
+not: whether the BD-LRU gates learned to recognise and skip the replacement,
+the CE cost of the perturbed pass, whether grad L_per differs from grad L_rec
+more than a second dropout draw does, where sigma^2 sits and whether it tracks
+hard samples, and (`--item_noise 0 0.1 0.2`) the paper's Fig. 4 robustness test.
+
+```bash
+python scripts/diagnose_pu.py experiments/slsrec/RUN_A experiments/slsrec/RUN_B --item_noise 0 0.1 0.2
+```
+
 ## Hyperparameter sweeps
 
 Every run writes `run_config.json` (the full namespace *after* `set_template`,
@@ -120,10 +183,12 @@ python -m pytest tests/ -q
 model/lru.py        original LRURec model (unchanged baseline)
 model/bdlru.py      BD-LRU recurrence, scans, causal depth-wise conv
 model/slsrec.py     SG-LRU, self-attention gate, PFFN, uncertainty estimator
+model/recblr.py     official RecBLR architecture, ported to the harness (--model_code=recblr)
 model/adaptive_gate.py  adaptive gating (research extension, off by default)
 model/triton_scan.py  RecBLR's Triton scan (optional, --scan_impl=triton)
 trainer/lru.py      original LRURec trainer (unchanged)
 trainer/slsrec.py   SLSRec objective (L_rec / L_perturb / L_uncertainty / L_total)
+trainer/recblr.py   RecBLR: plain per-position CE, SLSRec's evaluation
 configs/slsrec_ml1m.yaml   resolved ML-1M configuration
 scripts/smoke_ablations.py short real-data smoke test for all four ablations
 scripts/sweep_hparams.sh   hyperparameter grid runner (restartable, parallel)
@@ -132,5 +197,6 @@ scripts/verify_lrurec.sh   LRURec baseline: this repo vs unmodified upstream
 scripts/run_gate_sweep.sh  original gate vs adaptive gate A/B experiment
 scripts/run_gate_sweep.ps1 the same experiment on Windows PowerShell
 scripts/compare_gates.py   gate comparison table + what each gate learned
+scripts/run_variants.py    RecBLR / ablations / SLSRec per seed, one comparison table vs the paper
 tests/              unit tests (scan, causality, padding, perturbation, losses, overfit)
 ```
