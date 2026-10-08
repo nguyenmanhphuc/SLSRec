@@ -34,7 +34,7 @@ def make_args(**overrides):
         bert_dropout=0.0, bert_attn_dropout=0.0,
         metric_ks=[1, 5, 10], best_metric='Recall@10',
         # architecture
-        slsrec_expand=2, slsrec_d_conv=4, scan_impl='torch', use_item_bias=False,
+        slsrec_expand=2, slsrec_d_conv=4, scan_impl='torch', use_item_bias=False, pffn_bias=False,
         use_sam_gate=True, sam_conv=True, sam_conv_activation='none',
         sam_num_heads=1, sam_attn_dropout=0.0,
         use_bdlru=True, bdlru_c=8.0, bdlru_r_min=0.9, bdlru_r_max=0.999,

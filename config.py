@@ -216,6 +216,9 @@ parser.add_argument('--scan_impl', type=str, default='torch',
                     choices=['torch', 'sequential', 'triton'])
 parser.add_argument('--use_item_bias', type=str2bool, default=False,
                     help='add a per-item bias to the logits (LRURec does; eq. (15) does not)')
+parser.add_argument('--pffn_bias', type=str2bool, default=False,
+                    help='biases on W6/W7/W8 of every PFFN (eq. (13) and (20) print none; '
+                         'the LRURec and RecBLR FFNs have them)')
 
 # self-attention gate, eq. (3)/(8) #
 parser.add_argument('--use_sam_gate', type=str2bool, default=True,

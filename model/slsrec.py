@@ -17,12 +17,10 @@ Equation map (paper -> code)
     (14) X^(l) = LayerNorm(Dropout(PFFN(O)) + O)      -> PFFNBlock
     (15) y = Softmax(M x^(L))                         -> SLSRecModel.forward (logits)
     (16) L_Rec = -Log(y_ui)                           -> trainer/slsrec.py
-    (17) perturbation x_t -> U(0,1) w.p. theta        -> model/bdlru.py::perturb_tokens
-         (--perturbation_site/_noise/_granularity select the alternative readings)
+    (17) perturbation x_t -> U(0,1) w.p. theta        -> model/bdlru.py::BDLRU._perturb
     (18) L_Per = -Log(ybar_ui)                        -> trainer/slsrec.py
     (19) ytilde = Softmax((1/sigma^2) M x^(L))        -> trainer/slsrec.py (exact mode)
     (20) Log(sigma^2) = Mc[i,:]' LN(Drop(PFFN(xc))+xc)-> UncertaintyEstimator (Fig. 2)
-         (--uncertainty_granularity: per prefix, per sequence, or one global sigma)
     (21) L_Unc = -Log(ytilde_ui)                      -> trainer/slsrec.py
     (22) L_Unc ~ (1/sigma^2) L_Rec + beta Log(sigma)  -> trainer/slsrec.py (approx mode)
     (23)/(24) L = (1 + alpha/sigma^2) L_Rec + L_Per   -> trainer/slsrec.py
@@ -35,7 +33,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .adaptive_gate import AdaptiveGate, FusionGate, gate_statistics
-from .bdlru import BDLRU, CausalDepthwiseConv1d, TokenPerturbation
+from .bdlru import BDLRU, CausalDepthwiseConv1d
 
 
 # --------------------------------------------------------------------------- #
@@ -155,27 +153,13 @@ class SGLRULayer(nn.Module):
                 granularity=getattr(args, 'gate_granularity', 'channel'),
                 hidden=getattr(args, 'gate_hidden', 0))
 
-        # Where eq. (17) replaces x_t.  'bdlru' is the paper's wording (x_t of eq. 9-12);
-        # 'bdlru_conv' (L2, before Conv1-D2) and 'layer' (the layer input X^(l-1), i.e.
-        # both branches and the residual) are the alternative readings of "replacing an
-        # item representation in each layer".  'embedding' is handled by SLSRecModel.
-        self.perturb_site = getattr(args, 'perturbation_site', 'bdlru')
-        perturb_kw = dict(prob=args.perturbation_probability,
-                          low=args.perturbation_low, high=args.perturbation_high,
-                          noise=getattr(args, 'perturbation_noise', 'uniform'),
-                          granularity=getattr(args, 'perturbation_granularity', 'position'))
-        self.perturbation = (TokenPerturbation(**perturb_kw)
-                             if self.perturb_site in ('bdlru_conv', 'layer') else None)
-
         self.conv2 = CausalDepthwiseConv1d(d, args.slsrec_d_conv, args.bdlru_conv_activation)
         if self.use_bdlru:
             self.bdlru = BDLRU(
                 d, c=args.bdlru_c, r_min=args.bdlru_r_min, r_max=args.bdlru_r_max,
                 lambda_init=args.bdlru_lambda_init, scan_impl=args.scan_impl,
-                perturb_prob=perturb_kw['prob'],
-                perturb_low=perturb_kw['low'], perturb_high=perturb_kw['high'],
-                perturb_noise=perturb_kw['noise'], perturb_granularity=perturb_kw['granularity'],
-                perturb_gates=getattr(args, 'perturbation_gates', 'perturbed'),
+                perturb_prob=args.perturbation_probability,
+                perturb_low=args.perturbation_low, perturb_high=args.perturbation_high,
             )
 
         self.dropout = nn.Dropout(args.bert_dropout)
@@ -183,8 +167,6 @@ class SGLRULayer(nn.Module):
 
     def forward(self, x, mask, perturb=False):
         x = x * mask.unsqueeze(-1).to(x.dtype)  # keep padding inert at every layer
-        if self.perturb_site == 'layer':
-            x = self.perturbation(x, mask, perturb=perturb)                    # (17), layer input
 
         l1 = self.w1(x)                                                        # (2)
         sam_out = self.sam(l1, mask) if self.use_sam_gate else None
@@ -200,11 +182,9 @@ class SGLRULayer(nn.Module):
             g = F.silu(l1)  # RecBLR-style linear gate branch (ablation A)
 
         l2 = self.w2(x)                                                        # (4)
-        if self.perturb_site == 'bdlru_conv':
-            l2 = self.perturbation(l2, mask, perturb=perturb)                  # (17), before conv
         h = self.conv2(l2, mask)                                               # (5) Conv1-D2
         if self.use_bdlru:
-            h = self.bdlru(h, mask, perturb=perturb and self.perturb_site == 'bdlru')  # (5), (17)
+            h = self.bdlru(h, mask, perturb=perturb)                           # (5) BD-LRU
 
         fused = self.fusion_gate(x, g, h) if self.fusion_gate is not None else g * h
         l3 = self.w3(fused)                                                    # (6)
@@ -215,13 +195,14 @@ class SGLRULayer(nn.Module):
 # PFFN -- eq. (13)/(14)
 # --------------------------------------------------------------------------- #
 class PFFN(nn.Module):
-    """(GeLU(O W6) (*) (O W7)) W8 -- eq. (13).  No biases are given in the paper."""
+    """(GeLU(O W6) (*) (O W7)) W8 -- eq. (13).  No biases are given in the paper;
+    ``bias=True`` (--pffn_bias) adds them, as the LRURec and RecBLR FFNs have."""
 
-    def __init__(self, d_model, d_ff):
+    def __init__(self, d_model, d_ff, bias=False):
         super().__init__()
-        self.w6 = nn.Linear(d_model, d_ff, bias=False)
-        self.w7 = nn.Linear(d_model, d_ff, bias=False)
-        self.w8 = nn.Linear(d_ff, d_model, bias=False)
+        self.w6 = nn.Linear(d_model, d_ff, bias=bias)
+        self.w7 = nn.Linear(d_model, d_ff, bias=bias)
+        self.w8 = nn.Linear(d_ff, d_model, bias=bias)
 
     def forward(self, x):
         return self.w8(F.gelu(self.w6(x)) * self.w7(x))
@@ -230,9 +211,9 @@ class PFFN(nn.Module):
 class PFFNBlock(nn.Module):
     """X^(l) = LayerNorm(Dropout(PFFN(O)) + O) -- eq. (14)."""
 
-    def __init__(self, d_model, d_ff, dropout):
+    def __init__(self, d_model, d_ff, dropout, bias=False):
         super().__init__()
-        self.pffn = PFFN(d_model, d_ff)
+        self.pffn = PFFN(d_model, d_ff, bias=bias)
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -261,7 +242,8 @@ class SLSRecBlock(nn.Module):
         super().__init__()
         D = args.bert_hidden_units
         self.sg_lru = SGLRULayer(args)
-        self.pffn_block = PFFNBlock(D, D * 4, args.bert_dropout)
+        self.pffn_block = PFFNBlock(D, D * 4, args.bert_dropout,
+                                    bias=getattr(args, 'pffn_bias', False))
 
     def forward(self, x, mask, perturb=False):
         return self.pffn_block(self.sg_lru(x, mask, perturb=perturb))
@@ -282,13 +264,13 @@ class UncertaintyEstimator(nn.Module):
 
     FORMS = {'fig2': PFFNBlock, 'eq20': UncertaintyPFFNBlock}
 
-    def __init__(self, num_items, hidden, max_len, dropout, dropout_form='fig2'):
+    def __init__(self, num_items, hidden, max_len, dropout, dropout_form='fig2', pffn_bias=False):
         super().__init__()
         if dropout_form not in self.FORMS:
             raise ValueError(f'unknown unc_dropout_form: {dropout_form}')
         self.dropout_form = dropout_form
         self.embedding = SLSRecEmbedding(num_items, hidden, max_len, dropout)
-        self.pffn_block = self.FORMS[dropout_form](hidden, hidden * 4, dropout)
+        self.pffn_block = self.FORMS[dropout_form](hidden, hidden * 4, dropout, bias=pffn_bias)
 
     def forward(self, seqs, labels):
         """seqs, labels: [B, L] -> log sigma^2: [B, L]."""
@@ -311,29 +293,15 @@ class SLSRecModel(nn.Module):
         self.use_item_bias = args.use_item_bias
         if self.use_item_bias:
             self.bias = nn.Parameter(torch.zeros(args.num_items + 1))
-        self.embedding_perturbation = (
-            TokenPerturbation(args.perturbation_probability, args.perturbation_low,
-                              args.perturbation_high, getattr(args, 'perturbation_noise', 'uniform'),
-                              getattr(args, 'perturbation_granularity', 'position'))
-            if getattr(args, 'perturbation_site', 'bdlru') == 'embedding' else None)
-
-        # 'position': one sigma per prefix (its last item, its target).  'sequence':
-        # one sigma_u per sequence from "the last row of Xc_u" and the ground truth,
-        # as Sec. III-C2 words it.  'global': a single learned sigma shared by all
-        # sequences -- the [45] approach the paper contrasts itself with.
-        self.uncertainty_granularity = getattr(args, 'uncertainty_granularity', 'position')
         self.uncertainty = (
             UncertaintyEstimator(args.num_items, D, args.bert_max_len, args.bert_dropout,
-                                 dropout_form=getattr(args, 'unc_dropout_form', 'fig2'))
-            if args.use_uncertainty and self.uncertainty_granularity != 'global' else None
+                                 dropout_form=getattr(args, 'unc_dropout_form', 'fig2'),
+                                 pffn_bias=getattr(args, 'pffn_bias', False))
+            if args.use_uncertainty else None
         )
-        if args.use_uncertainty and self.uncertainty_granularity == 'global':
-            self.global_logvar = nn.Parameter(torch.zeros(()))
         self.truncated_normal_init()
         if getattr(args, 'gate_neutral_init', True):
             self.reset_gates_neutral()
-        if hasattr(self, 'global_logvar'):
-            nn.init.zeros_(self.global_logvar)  # sigma^2 = 1: eq. (24) starts at (1 + alpha) L_rec
 
     def reset_gates_neutral(self):
         """Put every adaptive gate back at its neutral point *after* the global
@@ -359,8 +327,6 @@ class SLSRecModel(nn.Module):
 
     def encode(self, seqs, perturb=False):
         x, mask = self.embedding(seqs)
-        if self.embedding_perturbation is not None:
-            x = self.embedding_perturbation(x, mask, perturb=perturb)          # (17), X^(0)
         for block in self.blocks:
             x = block(x, mask, perturb=perturb)
         return x, mask
@@ -377,16 +343,9 @@ class SLSRecModel(nn.Module):
         return self.logits_from_hidden(x)
 
     def log_variance(self, seqs, labels):
-        """Log(sigma_u^2) per position -- eq. (20).  [B, L], constant along L unless
-        --uncertainty_granularity=position."""
-        if self.uncertainty_granularity == 'global':
-            logvar = self.global_logvar.expand(labels.shape)
-        elif self.uncertainty_granularity == 'sequence':
-            # the estimator is position-wise, so the last column alone is exact
-            logvar = self.uncertainty(seqs[:, -1:], labels[:, -1:]).expand(labels.shape)
-        else:
-            assert self.uncertainty is not None
-            logvar = self.uncertainty(seqs, labels)
+        """Log(sigma_u^2) per position -- eq. (20).  [B, L]."""
+        assert self.uncertainty is not None
+        logvar = self.uncertainty(seqs, labels)
         clamp = self.args.uncertainty_logvar_clamp
         if clamp is not None and clamp > 0:
             logvar = logvar.clamp(-clamp, clamp)
