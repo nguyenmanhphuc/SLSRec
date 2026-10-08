@@ -195,13 +195,14 @@ class SGLRULayer(nn.Module):
 # PFFN -- eq. (13)/(14)
 # --------------------------------------------------------------------------- #
 class PFFN(nn.Module):
-    """(GeLU(O W6) (*) (O W7)) W8 -- eq. (13).  No biases are given in the paper."""
+    """(GeLU(O W6) (*) (O W7)) W8 -- eq. (13).  No biases are given in the paper;
+    ``bias=True`` (--pffn_bias) adds them, as the LRURec and RecBLR FFNs have."""
 
-    def __init__(self, d_model, d_ff):
+    def __init__(self, d_model, d_ff, bias=False):
         super().__init__()
-        self.w6 = nn.Linear(d_model, d_ff, bias=False)
-        self.w7 = nn.Linear(d_model, d_ff, bias=False)
-        self.w8 = nn.Linear(d_ff, d_model, bias=False)
+        self.w6 = nn.Linear(d_model, d_ff, bias=bias)
+        self.w7 = nn.Linear(d_model, d_ff, bias=bias)
+        self.w8 = nn.Linear(d_ff, d_model, bias=bias)
 
     def forward(self, x):
         return self.w8(F.gelu(self.w6(x)) * self.w7(x))
@@ -210,9 +211,9 @@ class PFFN(nn.Module):
 class PFFNBlock(nn.Module):
     """X^(l) = LayerNorm(Dropout(PFFN(O)) + O) -- eq. (14)."""
 
-    def __init__(self, d_model, d_ff, dropout):
+    def __init__(self, d_model, d_ff, dropout, bias=False):
         super().__init__()
-        self.pffn = PFFN(d_model, d_ff)
+        self.pffn = PFFN(d_model, d_ff, bias=bias)
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(d_model)
 
@@ -241,7 +242,8 @@ class SLSRecBlock(nn.Module):
         super().__init__()
         D = args.bert_hidden_units
         self.sg_lru = SGLRULayer(args)
-        self.pffn_block = PFFNBlock(D, D * 4, args.bert_dropout)
+        self.pffn_block = PFFNBlock(D, D * 4, args.bert_dropout,
+                                    bias=getattr(args, 'pffn_bias', False))
 
     def forward(self, x, mask, perturb=False):
         return self.pffn_block(self.sg_lru(x, mask, perturb=perturb))
@@ -262,13 +264,13 @@ class UncertaintyEstimator(nn.Module):
 
     FORMS = {'fig2': PFFNBlock, 'eq20': UncertaintyPFFNBlock}
 
-    def __init__(self, num_items, hidden, max_len, dropout, dropout_form='fig2'):
+    def __init__(self, num_items, hidden, max_len, dropout, dropout_form='fig2', pffn_bias=False):
         super().__init__()
         if dropout_form not in self.FORMS:
             raise ValueError(f'unknown unc_dropout_form: {dropout_form}')
         self.dropout_form = dropout_form
         self.embedding = SLSRecEmbedding(num_items, hidden, max_len, dropout)
-        self.pffn_block = self.FORMS[dropout_form](hidden, hidden * 4, dropout)
+        self.pffn_block = self.FORMS[dropout_form](hidden, hidden * 4, dropout, bias=pffn_bias)
 
     def forward(self, seqs, labels):
         """seqs, labels: [B, L] -> log sigma^2: [B, L]."""
@@ -293,7 +295,8 @@ class SLSRecModel(nn.Module):
             self.bias = nn.Parameter(torch.zeros(args.num_items + 1))
         self.uncertainty = (
             UncertaintyEstimator(args.num_items, D, args.bert_max_len, args.bert_dropout,
-                                 dropout_form=getattr(args, 'unc_dropout_form', 'fig2'))
+                                 dropout_form=getattr(args, 'unc_dropout_form', 'fig2'),
+                                 pffn_bias=getattr(args, 'pffn_bias', False))
             if args.use_uncertainty else None
         )
         self.truncated_normal_init()
