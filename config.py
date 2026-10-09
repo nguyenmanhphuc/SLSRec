@@ -61,13 +61,14 @@ def set_template(args):
     # Training schedule.  SLSRec follows its paper (Sec. IV-A4): "training is
     # limited to a maximum of 1000 epochs.  Validation is conducted every 5
     # epochs, and ... no improvement in the validation Recall@10 metric for 10
-    # consecutive validation epochs".  The LRURec baseline keeps LRURec's own
-    # protocol (500 epochs, validate every val_iterations steps).  Explicitly
-    # passed flags always win.
-    is_slsrec = args.model_code == 'slsrec'
-    if args.num_epochs is None: args.num_epochs = 1000 if is_slsrec else 500
-    if args.val_strategy is None: args.val_strategy = 'epoch' if is_slsrec else 'iteration'
-    if args.val_epochs is None: args.val_epochs = 5 if is_slsrec else 1
+    # consecutive validation epochs".  The same paragraph applies it to the
+    # baselines it re-ran in the LRURec repository, so RecBLR gets it too.  The
+    # LRURec baseline keeps LRURec's own protocol (500 epochs, validate every
+    # val_iterations steps).  Explicitly passed flags always win.
+    paper_schedule = args.model_code in ('slsrec', 'recblr')
+    if args.num_epochs is None: args.num_epochs = 1000 if paper_schedule else 500
+    if args.val_strategy is None: args.val_strategy = 'epoch' if paper_schedule else 'iteration'
+    if args.val_epochs is None: args.val_epochs = 5 if paper_schedule else 1
     if torch.cuda.is_available(): args.device = 'cuda'
     else: args.device = 'cpu'
     args.optimizer = 'AdamW'
@@ -190,7 +191,7 @@ parser.add_argument('--use_wandb', type=bool, default=False)
 ################
 # Model
 ################
-parser.add_argument('--model_code', type=str, default=None, choices=[None, 'lru', 'slsrec'])
+parser.add_argument('--model_code', type=str, default=None, choices=[None, 'lru', 'slsrec', 'recblr'])
 # BERT specs, used for other models as well #
 parser.add_argument('--bert_max_len', type=int, default=None)
 parser.add_argument('--bert_hidden_units', type=int, default=64)
@@ -206,9 +207,9 @@ parser.add_argument('--bert_mask_prob', type=float, default=None)
 ################
 # architecture #
 parser.add_argument('--slsrec_expand', type=int, default=2,
-                    help='latent width d = expand * D (paper: d = 2D)')
+                    help='latent width d = expand * D (paper: d = 2D; also RecBLR expand)')
 parser.add_argument('--slsrec_d_conv', type=int, default=4,
-                    help='causal depth-wise convolution kernel size (RecBLR: 4)')
+                    help='causal depth-wise convolution kernel size (RecBLR: 4; also RecBLR d_conv)')
 parser.add_argument('--slsrec_dropout', type=float, default=None,
                     help='override the per-dataset SLSRec dropout rate')
 parser.add_argument('--scan_impl', type=str, default='torch',
@@ -248,6 +249,24 @@ parser.add_argument('--perturbation_low', type=float, default=0.0)
 parser.add_argument('--perturbation_high', type=float, default=1.0)
 parser.add_argument('--perturbation_weight', type=float, default=1.0,
                     help='coefficient of L_Per in eq. (23); the paper uses 1')
+# alternative readings of eq. (17) -- defaults are the literal one
+parser.add_argument('--perturbation_site', type=str, default='bdlru',
+                    choices=['bdlru', 'bdlru_conv', 'layer', 'embedding'],
+                    help="where x_t is replaced.  bdlru = the BD-LRU input x_t of eq. (9)-(12), as "
+                         "Sec. III-C1 writes it; bdlru_conv = L2, before Conv1-D2; layer = the input "
+                         "X^(l-1) of every SG-LRU layer (gate branch, BD-LRU branch and residual); "
+                         "embedding = X^(0) once, before the first layer")
+parser.add_argument('--perturbation_noise', type=str, default='uniform', choices=['uniform', 'shuffle'],
+                    help='uniform = U(low, high) as in eq. (17); shuffle = the vector at a random real '
+                         'position of another sequence in the batch (in-distribution noise)')
+parser.add_argument('--perturbation_granularity', type=str, default='position',
+                    choices=['position', 'element'],
+                    help='position = one draw per step replaces the whole vector (eq. 17); '
+                         'element = every component is replaced independently')
+parser.add_argument('--perturbation_gates', type=str, default='perturbed', choices=['perturbed', 'clean'],
+                    help='site=bdlru only.  perturbed = r_t, i_t of eq. (9)/(10) see the replaced x_t '
+                         '(literal "replace x_t in (9)-(12)"); clean = the gates see the clean x_t and '
+                         'only the input term of eq. (12) is replaced, so the noise cannot be gated out')
 
 # uncertainty scaling, eq. (19)-(24) #
 parser.add_argument('--use_uncertainty', type=str2bool, default=True)
@@ -263,6 +282,16 @@ parser.add_argument('--unc_dropout_form', type=str, default='fig2', choices=['fi
                          "eq. (20) is printed.  Identical at eval time.")
 parser.add_argument('--uncertainty_logvar_clamp', type=float, default=8.0,
                     help='numerical safety clamp on Log(sigma^2); 0 disables')
+# alternative readings of eq. (19)-(24) -- defaults are the ones used so far
+parser.add_argument('--uncertainty_granularity', type=str, default='position',
+                    choices=['position', 'sequence', 'global'],
+                    help="position = one sigma per prefix, from its last item and its target "
+                         "(per-position training); sequence = one sigma_u per sequence from its last "
+                         "item and ground truth, as Sec. III-C2 words it, shared by all its positions; "
+                         "global = one learned sigma for every sequence (the [45] approach)")
+parser.add_argument('--uncertainty_weight_norm', type=str, default='none', choices=['none', 'batch'],
+                    help='batch = divide 1/sigma^2 by its batch mean, so U can move weight between '
+                         'samples but cannot switch itself off.  A control, not in the paper')
 
 ################
 # Adaptive gating -- RESEARCH EXTENSION, not part of the SLSRec paper.

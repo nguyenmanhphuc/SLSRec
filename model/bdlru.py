@@ -105,6 +105,85 @@ class CausalDepthwiseConv1d(nn.Module):
 
 
 # --------------------------------------------------------------------------- #
+# Perturbation injection -- eq. (17) and its alternative readings
+# --------------------------------------------------------------------------- #
+def _borrow_from_other_sequences(x, mask):
+    """For every (b, t): the vector at a random real position of another sequence.
+
+    Assumes the harness's left padding (real items right-aligned).  Detached, so
+    the borrowed vector is pure noise to the perturbed pass.
+    """
+    B, L, _ = x.shape
+    dev = x.device
+    if mask is None:
+        mask = torch.ones(B, L, dtype=torch.bool, device=dev)
+    lengths = mask.long().sum(1)
+    if B > 1:
+        src_b = (torch.arange(B, device=dev).view(B, 1) + torch.randint(1, B, (B, L), device=dev)) % B
+    else:
+        src_b = torch.zeros(B, L, dtype=torch.long, device=dev)
+    n = lengths[src_b].clamp_min(1)
+    offset = torch.minimum((torch.rand(B, L, device=dev) * n).long(), n - 1)
+    return x.detach()[src_b, L - 1 - offset]
+
+
+def perturb_tokens(x, mask, prob, low=0.0, high=1.0, noise='uniform', granularity='position'):
+    """SLSRec eq. (17).  Returns the perturbed x and the boolean replacement mask.
+
+    granularity='position' is eq. (17): one draw p per (sequence, step) replaces the
+    whole vector; 'element' replaces each component independently with probability
+    ``prob``.  noise='uniform' is eq. (17): i.i.d. U(low, high); 'shuffle' uses the
+    vector at a random real position of a different sequence in the batch -- noise
+    whose scale always matches the activations, so the network cannot spot the
+    replacement by its range.  Padding is never replaced.
+
+    The default (position, uniform) draws its random numbers in the same order as
+    the original implementation, so default runs are bit-for-bit unchanged.
+    """
+    if granularity == 'position':
+        replace = torch.rand(x.shape[:2], device=x.device, dtype=x.dtype) <= prob
+        if mask is not None:  # never perturb padding
+            replace = replace & mask.bool()
+        replace_f = replace.unsqueeze(-1).to(x.dtype)
+    elif granularity == 'element':
+        replace = torch.rand_like(x) <= prob
+        if mask is not None:
+            replace = replace & mask.bool().unsqueeze(-1)
+        replace_f = replace.to(x.dtype)
+    else:
+        raise ValueError(f'unknown perturbation granularity: {granularity}')
+
+    if noise == 'uniform':
+        fill = torch.rand_like(x) * (high - low) + low
+    elif noise == 'shuffle':
+        fill = _borrow_from_other_sequences(x, mask)
+    else:
+        raise ValueError(f'unknown perturbation noise: {noise}')
+    return x * (1.0 - replace_f) + fill * replace_f, replace
+
+
+class TokenPerturbation(nn.Module):
+    """eq. (17) at a site other than the BD-LRU input (``--perturbation_site``).
+
+    No parameters, so checkpoints are interchangeable across sites.
+    """
+
+    def __init__(self, prob, low=0.0, high=1.0, noise='uniform', granularity='position'):
+        super().__init__()
+        self.prob, self.low, self.high = prob, low, high
+        self.noise, self.granularity = noise, granularity
+        self.last_perturb_mask = None  # exposed for tests / logging
+
+    def forward(self, x, mask, perturb=True):
+        if perturb and self.prob > 0:
+            x, self.last_perturb_mask = perturb_tokens(
+                x, mask, self.prob, self.low, self.high, self.noise, self.granularity)
+        else:
+            self.last_perturb_mask = None
+        return x
+
+
+# --------------------------------------------------------------------------- #
 # BD-LRU
 # --------------------------------------------------------------------------- #
 class BDLRU(nn.Module):
@@ -114,11 +193,21 @@ class BDLRU(nn.Module):
     independently with probability ``perturb_prob``, by a vector whose entries
     are drawn i.i.d. from U(0, 1).  The replacement happens on ``x`` *before*
     eq. (9), so r_t, i_t and the state update all see the perturbed input.
+    ``perturb_noise`` / ``perturb_granularity`` select the alternative readings
+    of ``perturb_tokens``.
+
+    ``perturb_gates='clean'`` computes r_t and i_t from the clean x_t and uses
+    the replacement only in the input term of eq. (12).  With the literal
+    reading the gates see the noise, and a trained model learns to recognise the
+    U(0,1) vector and close r_t on it (a_t -> 1: the step is skipped), which is
+    what makes L_per collapse onto L_rec; clean gates take that escape away.
     """
 
     def __init__(self, d_model, c=8.0, r_min=0.9, r_max=0.999,
                  lambda_init='linspace', scan_impl='torch',
-                 perturb_prob=0.1, perturb_low=0.0, perturb_high=1.0):
+                 perturb_prob=0.1, perturb_low=0.0, perturb_high=1.0,
+                 perturb_noise='uniform', perturb_granularity='position',
+                 perturb_gates='perturbed'):
         super().__init__()
         self.d_model = d_model
         self.c = c
@@ -126,6 +215,11 @@ class BDLRU(nn.Module):
         self.perturb_prob = perturb_prob
         self.perturb_low = perturb_low
         self.perturb_high = perturb_high
+        self.perturb_noise = perturb_noise
+        self.perturb_granularity = perturb_granularity
+        if perturb_gates not in ('perturbed', 'clean'):
+            raise ValueError(f'unknown perturb_gates: {perturb_gates}')
+        self.perturb_gates = perturb_gates
 
         # r_t and i_t from a single fused linear (equivalent to W4/b4, W5/b5)
         self.gates = nn.Linear(d_model, 2 * d_model, bias=True)
@@ -145,21 +239,19 @@ class BDLRU(nn.Module):
 
     def _perturb(self, x, mask):
         """SLSRec eq. (17).  Returns the perturbed x and the boolean mask used."""
-        keep = torch.rand(x.shape[:2], device=x.device, dtype=x.dtype)
-        replace = keep <= self.perturb_prob
-        if mask is not None:  # never perturb padding
-            replace = replace & mask.bool()
-        noise = torch.rand_like(x) * (self.perturb_high - self.perturb_low) + self.perturb_low
-        replace_f = replace.unsqueeze(-1).to(x.dtype)
-        return x * (1.0 - replace_f) + noise * replace_f, replace
+        return perturb_tokens(x, mask, self.perturb_prob, self.perturb_low, self.perturb_high,
+                              self.perturb_noise, self.perturb_granularity)
 
     def forward(self, x, mask=None, perturb=False):
+        gate_x = x
         if perturb and self.perturb_prob > 0:
             x, self.last_perturb_mask = self._perturb(x, mask)
+            if self.perturb_gates == 'perturbed':
+                gate_x = x
         else:
             self.last_perturb_mask = None
 
-        recurrence, inp = self.gates(x).chunk(2, dim=-1)      # eq. (9), (10)
+        recurrence, inp = self.gates(gate_x).chunk(2, dim=-1)  # eq. (9), (10)
         r_t, i_t = torch.sigmoid(recurrence), torch.sigmoid(inp)
 
         log_sigmoid_lambda = F.logsigmoid(self.Lambda)         # <= 0  -> a_t in (0, 1]

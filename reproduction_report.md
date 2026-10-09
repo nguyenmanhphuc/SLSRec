@@ -300,6 +300,10 @@ is computed per position, using that position's ground-truth item for `Mc[i,:]`.
 The uncertainty branch is purely position-wise (embedding → PFFN → LayerNorm),
 so this generalisation introduces no information leakage across time. Evaluation
 still uses only the last position, exactly as eq. (15) prescribes.
+`--uncertainty_granularity=sequence` takes Sec. III-C2 literally instead -- one
+`σ_u` per sequence from "the last row of `Xc_u`" and its ground truth, shared by
+all positions of that sequence; `global` is a single learned `σ` (the [45]
+approach the paper contrasts itself with).
 
 ### 8.3 `L_Unc`: exact eq. (21) vs. the eq. (22) approximation
 Eq. (21) defines `L_Unc = −Log(ỹ_ui)` with `ỹ` from the temperature-scaled softmax
@@ -318,7 +322,9 @@ effectiveness even as `σ²` tends to +∞"). This is visible in the smoke run
 not "fixed"** — it is reproduced as specified. `--uncertainty_beta` is available
 for anyone who wants the penalty term back. A numerical safety clamp
 `--uncertainty_logvar_clamp` (default `|Log σ²| ≤ 8`) prevents overflow; the paper
-specifies none.
+specifies none. `--uncertainty_weight_norm=batch` is a control, not a reading:
+it rescales `1/σ²` to batch mean 1, so the term can redistribute weight between
+samples but cannot decay away.
 
 ### 8.5 Activation after the two convolutions
 Eq. (3) writes `G = SAM(L1) + Conv1-D1(L1)` with no activation, and eq. (5)
@@ -356,6 +362,11 @@ full `d`-dimensional vector with i.i.d. `U(0,1)` components; an independent draw
 per layer ("randomly replacing an item representation **in each layer**"); padded
 positions are excluded (the paper is silent, but perturbing padding would
 contradict the harness's masking).
+Alternative readings, each a flag defaulting to the above:
+`--perturbation_site` (`bdlru` = x_t of eq. 9-12; `bdlru_conv` = before Conv1-D2;
+`layer` = the layer input X^(l-1), reaching the gate branch and the residual too;
+`embedding` = X^(0) once), `--perturbation_noise=shuffle` (a real vector from
+another sequence instead of U(0,1)) and `--perturbation_granularity=element`.
 
 ### 8.10 Item bias in eq. (15)
 Eq. (15) has no per-item bias; LRURec's prediction head does. **Decision:**

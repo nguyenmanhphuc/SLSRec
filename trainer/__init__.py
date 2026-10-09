@@ -1,10 +1,12 @@
 from .lru import *
 from .slsrec import SLSRecTrainer
+from .recblr import RecBLRTrainer
 
 
 TRAINERS = {
     'lru': LRUTrainer,
     'slsrec': SLSRecTrainer,
+    'recblr': RecBLRTrainer,
 }
 
 

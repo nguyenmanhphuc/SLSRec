@@ -55,6 +55,9 @@ def slsrec_losses(args, model, seqs, labels, training=True):
     if args.use_uncertainty:
         logvar = model.log_variance(seqs, labels)                        # eq. (20)
         inv_var = torch.exp(-logvar)                                     # 1 / sigma_u^2
+        if getattr(args, 'uncertainty_weight_norm', 'none') == 'batch':
+            # mean weight pinned to 1: sigma can only redistribute, never vanish
+            inv_var = inv_var / _masked_mean(inv_var, valid).clamp_min(1e-12)
         if args.uncertainty_loss == 'approx':                            # eq. (22)
             unc_per_pos = inv_var * rec_per_pos
         elif args.uncertainty_loss == 'exact':                           # eq. (19)/(21)
