@@ -1,7 +1,7 @@
 {
     "exp_name": "noP_d06_bias_beauty_seed42",
     "export_root": "experiments/slsrec/noP_d06_bias_beauty_seed42",
-    "started_at": "2026-10-09T09:26:09",
+    "started_at": "2026-10-09T20:37:49",
     "argv": [
         "train.py",
         "--dataset_code=beauty",
@@ -120,7 +120,7 @@
         "test_batches": 198
     },
     "env": {
-        "git_commit": "7e652e8-dirty",
+        "git_commit": "4533338-dirty",
         "ref_lrurec_commit": null,
         "python": "3.9.25",
         "torch": "2.0.1+cu117",
