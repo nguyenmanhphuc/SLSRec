@@ -1,7 +1,7 @@
 {
     "exp_name": "noP_attn075_beauty_seed2026",
-    "finished_at": "2026-10-10T07:40:04",
-    "elapsed_seconds": 7249.1,
+    "finished_at": "2026-10-11T05:08:06",
+    "elapsed_seconds": 8550.4,
     "epochs_completed": 115,
     "accum_iter": 47035,
     "validations": 24,

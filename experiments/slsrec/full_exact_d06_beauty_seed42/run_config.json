@@ -1,7 +1,7 @@
 {
     "exp_name": "full_exact_d06_beauty_seed42",
     "export_root": "experiments/slsrec/full_exact_d06_beauty_seed42",
-    "started_at": "2026-10-10T09:39:49",
+    "started_at": "2026-10-11T02:54:24",
     "argv": [
         "train.py",
         "--dataset_code=beauty",

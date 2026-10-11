@@ -162,7 +162,10 @@ class SGLRULayer(nn.Module):
                 perturb_low=args.perturbation_low, perturb_high=args.perturbation_high,
             )
 
-        self.dropout = nn.Dropout(args.bert_dropout)
+        # eq. (7).  --sglru_dropout overrides the shared rate here only: LRURec, which
+        # SLSRec says it builds on, drives the matching position with bert_attn_dropout.
+        sglru_p = getattr(args, 'sglru_dropout', None)
+        self.dropout = nn.Dropout(args.bert_dropout if sglru_p is None else sglru_p)
         self.layer_norm = nn.LayerNorm(D)
 
     def forward(self, x, mask, perturb=False):

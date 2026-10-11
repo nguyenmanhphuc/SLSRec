@@ -1,10 +1,10 @@
 {
     "exp_name": "full_exact_d06_beauty_seed42",
-    "finished_at": "2026-10-10T16:42:45",
-    "elapsed_seconds": 25375.6,
+    "finished_at": "2026-10-11T08:12:34",
+    "elapsed_seconds": 19090.3,
     "epochs_completed": 140,
     "accum_iter": 57260,
-    "validations": 30,
+    "validations": 59,
     "early_stopped": true,
     "best_metric": "Recall@10",
     "best_val_at": {

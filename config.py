@@ -212,6 +212,9 @@ parser.add_argument('--slsrec_d_conv', type=int, default=4,
                     help='causal depth-wise convolution kernel size (RecBLR: 4; also RecBLR d_conv)')
 parser.add_argument('--slsrec_dropout', type=float, default=None,
                     help='override the per-dataset SLSRec dropout rate')
+parser.add_argument('--sglru_dropout', type=float, default=None,
+                    help='dropout on the SG-LRU output, eq. (7) only; default = the shared rate. '
+                         'LRURec wires this position to --bert_attn_dropout, not --bert_dropout')
 parser.add_argument('--scan_impl', type=str, default='torch',
                     choices=['torch', 'sequential', 'triton'])
 parser.add_argument('--use_item_bias', type=str2bool, default=False,

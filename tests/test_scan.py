@@ -142,6 +142,21 @@ def test_pffn_bias_switch(use_uncertainty):
     assert extra == n_pffn * (4 * D + 4 * D + D)
 
 
+def test_sglru_dropout_switch():
+    """--sglru_dropout changes the eq. (7) dropout only; every other dropout keeps the
+    shared rate, and leaving it unset reproduces the shared rate everywhere."""
+    def rates(model):
+        sg = {blk.sg_lru.dropout.p for blk in model.model.blocks}
+        rest = {m.p for n, m in model.named_modules()
+                if isinstance(m, torch.nn.Dropout) and '.sg_lru.dropout' not in n and '.sam.' not in n}
+        return sg, rest
+
+    sg, rest = rates(SLSRec(make_args(bert_dropout=0.75)))
+    assert sg == {0.75} and rest == {0.75}
+    sg, rest = rates(SLSRec(make_args(bert_dropout=0.75, sglru_dropout=0.2)))
+    assert sg == {0.2} and rest == {0.75}
+
+
 def test_recurrence_is_stable():
     """a_t must live in (0, 1] so the recurrence cannot blow up."""
     seed_all()
