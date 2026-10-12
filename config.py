@@ -232,6 +232,12 @@ parser.add_argument('--sam_conv_activation', type=str, default='none', choices=[
 parser.add_argument('--sam_num_heads', type=int, default=1,
                     help='eq. (8) is single-head')
 parser.add_argument('--sam_attn_dropout', type=float, default=0.0)
+parser.add_argument('--sam_attention', type=str, default='softmax',
+                    choices=['softmax', 'entmax15', 'sparsemax', 'entmax_adaptive'],
+                    help='softmax = eq. (8).  Extension from SAFA (not in SLSRec): alpha-entmax gives '
+                         'exactly-zero weights; entmax_adaptive learns alpha in (1, 2) per position '
+                         'from the causal running mean of the SAM input (SAFA eq. 7)')
+parser.add_argument('--entmax_iters', type=int, default=50, help='bisection steps for alpha-entmax')
 
 # BD-LRU, eq. (9)-(12) #
 parser.add_argument('--use_bdlru', type=str2bool, default=True)

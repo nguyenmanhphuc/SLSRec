@@ -37,7 +37,7 @@ def make_args(**overrides):
         slsrec_expand=2, slsrec_d_conv=4, scan_impl='torch', use_item_bias=False, pffn_bias=False,
         sglru_dropout=None,
         use_sam_gate=True, sam_conv=True, sam_conv_activation='none',
-        sam_num_heads=1, sam_attn_dropout=0.0,
+        sam_num_heads=1, sam_attn_dropout=0.0, sam_attention='softmax', entmax_iters=50,
         use_bdlru=True, bdlru_c=8.0, bdlru_r_min=0.9, bdlru_r_max=0.999,
         bdlru_lambda_init='linspace', bdlru_conv_activation='silu',
         # perturbation

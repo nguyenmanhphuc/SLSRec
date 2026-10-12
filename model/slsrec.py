@@ -34,6 +34,7 @@ import torch.nn.functional as F
 
 from .adaptive_gate import AdaptiveGate, FusionGate, gate_statistics
 from .bdlru import BDLRU, CausalDepthwiseConv1d, TokenPerturbation
+from .entmax import entmax_bisect
 
 
 def _perturbation_options(args):
@@ -89,15 +90,46 @@ class CausalSelfAttention(nn.Module):
     result at a real position does not depend on how much padding precedes it.
     """
 
-    def __init__(self, d, num_heads=1, dropout=0.0):
+    ATTENTIONS = ('softmax', 'entmax15', 'sparsemax', 'entmax_adaptive')
+
+    def __init__(self, d, num_heads=1, dropout=0.0, attention='softmax', entmax_iters=50):
         super().__init__()
         assert d % num_heads == 0
+        if attention not in self.ATTENTIONS:
+            raise ValueError(f'unknown sam_attention: {attention}')
         self.num_heads = num_heads
         self.head_dim = d // num_heads
         self.w_q = nn.Linear(d, d, bias=False)
         self.w_k = nn.Linear(d, d, bias=False)
         self.w_v = nn.Linear(d, d, bias=False)
         self.dropout = nn.Dropout(dropout)
+        # --- research extension (SAFA): sparse attention, not in the SLSRec paper --- #
+        # entmax_adaptive learns alpha in (1, 2) as SAFA eq. (7), alpha = sigmoid(w.c + b) + 1,
+        # but with c the *causal* running mean of the inputs up to each position, so a
+        # future item cannot change how sparse the attention of an earlier one is.
+        self.attention = attention
+        self.entmax_iters = entmax_iters
+        self.last_alpha = None  # exposed for logging
+        if attention == 'entmax_adaptive':
+            self.alpha_proj = nn.Linear(d, 1)
+
+    def _normalise(self, scores, x, mask):
+        """softmax of eq. (8), or alpha-entmax (SAFA) -- masked scores are -inf."""
+        if self.attention == 'softmax':
+            return torch.softmax(scores, dim=-1)
+        B, H, L, _ = scores.shape
+        if self.attention == 'entmax15':
+            alpha = 1.5
+        elif self.attention == 'sparsemax':
+            alpha = 2.0
+        else:
+            m = (mask if mask is not None else torch.ones(B, L, device=x.device)).to(x.dtype)
+            running = torch.cumsum(x * m.unsqueeze(-1), dim=1) / torch.cumsum(m, 1).clamp_min(1).unsqueeze(-1)
+            a = torch.sigmoid(self.alpha_proj(running)) + 1.0            # [B, L, 1]
+            a = a.clamp(1.01, 2.0)    # alpha -> 1 makes 1/(alpha-1) explode
+            self.last_alpha = a.detach()
+            alpha = a.view(B, 1, L, 1)
+        return entmax_bisect(scores, alpha, self.entmax_iters)
 
     def _split(self, t, B, L):
         return t.view(B, L, self.num_heads, self.head_dim).transpose(1, 2)
@@ -118,7 +150,7 @@ class CausalSelfAttention(nn.Module):
         allowed = allowed | torch.eye(L, device=x.device, dtype=torch.bool).view(1, 1, L, L)
         scores = scores.masked_fill(~allowed, float('-inf'))
 
-        attn = self.dropout(torch.softmax(scores, dim=-1))
+        attn = self.dropout(self._normalise(scores, x, mask))
         out = torch.matmul(attn, v).transpose(1, 2).reshape(B, L, -1)
         if mask is not None:
             out = out * mask.unsqueeze(-1).to(out.dtype)
@@ -143,7 +175,9 @@ class SGLRULayer(nn.Module):
         self.w3 = nn.Linear(d, D, bias=True)                                  # (6)
 
         if self.use_sam_gate:
-            self.sam = CausalSelfAttention(d, args.sam_num_heads, args.sam_attn_dropout)
+            self.sam = CausalSelfAttention(d, args.sam_num_heads, args.sam_attn_dropout,
+                                           attention=getattr(args, 'sam_attention', 'softmax'),
+                                           entmax_iters=getattr(args, 'entmax_iters', 50))
         if self.sam_conv:
             self.conv1 = CausalDepthwiseConv1d(d, args.slsrec_d_conv, args.sam_conv_activation)
 
