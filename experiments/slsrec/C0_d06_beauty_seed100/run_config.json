@@ -1,7 +1,7 @@
 {
     "exp_name": "C0_d06_beauty_seed100",
     "export_root": "experiments/slsrec/C0_d06_beauty_seed100",
-    "started_at": "2026-10-10T14:53:21",
+    "started_at": "2026-10-10T11:27:25",
     "argv": [
         "train.py",
         "--dataset_code=beauty",
@@ -65,15 +65,10 @@
         "num_users": 52204,
         "num_workers": 8,
         "optimizer": "AdamW",
-        "perturbation_gates": "perturbed",
-        "perturbation_granularity": "position",
         "perturbation_high": 1.0,
         "perturbation_low": 0.0,
-        "perturbation_noise": "uniform",
         "perturbation_probability": 0.0,
-        "perturbation_site": "bdlru",
         "perturbation_weight": 1.0,
-        "pffn_bias": false,
         "sam_attn_dropout": 0.0,
         "sam_conv": true,
         "sam_conv_activation": "none",
@@ -92,10 +87,8 @@
         "unc_dropout_form": "fig2",
         "uncertainty_alpha": 0.01,
         "uncertainty_beta": 0.0,
-        "uncertainty_granularity": "position",
         "uncertainty_logvar_clamp": 8.0,
         "uncertainty_loss": "approx",
-        "uncertainty_weight_norm": "none",
         "use_bdlru": true,
         "use_item_bias": false,
         "use_perturbation": true,
@@ -120,13 +113,13 @@
         "test_batches": 198
     },
     "env": {
-        "git_commit": "c65a699-dirty",
+        "git_commit": null,
         "ref_lrurec_commit": null,
         "python": "3.10.12",
         "torch": "2.1.0+cu118",
         "cuda": "11.8",
         "gpu": "NVIDIA RTX 4000 Ada Generation",
         "device": "cuda",
-        "hostname": "b73b9fa238a8"
+        "hostname": "dd17b7865626"
     }
 }

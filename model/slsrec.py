@@ -33,7 +33,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .adaptive_gate import AdaptiveGate, FusionGate, gate_statistics
-from .bdlru import BDLRU, CausalDepthwiseConv1d
+from .bdlru import BDLRU, CausalDepthwiseConv1d, TokenPerturbation
+
+
+def _perturbation_options(args):
+    """eq. (17) and its alternative readings (--perturbation_site/_noise/_granularity/_gates)."""
+    return dict(site=getattr(args, 'perturbation_site', 'bdlru'),
+                noise=getattr(args, 'perturbation_noise', 'uniform'),
+                granularity=getattr(args, 'perturbation_granularity', 'position'),
+                gates=getattr(args, 'perturbation_gates', 'perturbed'))
+
+
+def _token_perturbation(args, opts):
+    return TokenPerturbation(args.perturbation_probability, args.perturbation_low,
+                             args.perturbation_high, opts['noise'], opts['granularity'])
 
 
 # --------------------------------------------------------------------------- #
@@ -154,12 +167,22 @@ class SGLRULayer(nn.Module):
                 hidden=getattr(args, 'gate_hidden', 0))
 
         self.conv2 = CausalDepthwiseConv1d(d, args.slsrec_d_conv, args.bdlru_conv_activation)
+        # eq. (17): 'bdlru' (the literal reading) perturbs x_t inside the BD-LRU;
+        # 'layer' perturbs this layer's input X^(l-1) (gate branch, BD-LRU branch and
+        # residual); 'bdlru_conv' perturbs L2 before Conv1-D2.  'embedding' lives in
+        # SLSRecModel.  No parameters either way, so checkpoints are interchangeable.
+        p = _perturbation_options(args)
+        self.perturbation_site = p['site']
+        self.perturbation = (_token_perturbation(args, p)
+                             if p['site'] in ('layer', 'bdlru_conv') else None)
         if self.use_bdlru:
             self.bdlru = BDLRU(
                 d, c=args.bdlru_c, r_min=args.bdlru_r_min, r_max=args.bdlru_r_max,
                 lambda_init=args.bdlru_lambda_init, scan_impl=args.scan_impl,
                 perturb_prob=args.perturbation_probability,
                 perturb_low=args.perturbation_low, perturb_high=args.perturbation_high,
+                perturb_noise=p['noise'], perturb_granularity=p['granularity'],
+                perturb_gates=p['gates'],
             )
 
         # eq. (7).  --sglru_dropout overrides the shared rate here only: LRURec, which
@@ -170,6 +193,8 @@ class SGLRULayer(nn.Module):
 
     def forward(self, x, mask, perturb=False):
         x = x * mask.unsqueeze(-1).to(x.dtype)  # keep padding inert at every layer
+        if self.perturbation_site == 'layer':
+            x = self.perturbation(x, mask, perturb=perturb)
 
         l1 = self.w1(x)                                                        # (2)
         sam_out = self.sam(l1, mask) if self.use_sam_gate else None
@@ -185,9 +210,11 @@ class SGLRULayer(nn.Module):
             g = F.silu(l1)  # RecBLR-style linear gate branch (ablation A)
 
         l2 = self.w2(x)                                                        # (4)
+        if self.perturbation_site == 'bdlru_conv':
+            l2 = self.perturbation(l2, mask, perturb=perturb)
         h = self.conv2(l2, mask)                                               # (5) Conv1-D2
         if self.use_bdlru:
-            h = self.bdlru(h, mask, perturb=perturb)                           # (5) BD-LRU
+            h = self.bdlru(h, mask, perturb=perturb and self.perturbation_site == 'bdlru')  # (5)
 
         fused = self.fusion_gate(x, g, h) if self.fusion_gate is not None else g * h
         l3 = self.w3(fused)                                                    # (6)
@@ -292,6 +319,9 @@ class SLSRecModel(nn.Module):
         self.args = args
         D = args.bert_hidden_units
         self.embedding = SLSRecEmbedding(args.num_items, D, args.bert_max_len, args.bert_dropout)
+        p = _perturbation_options(args)
+        self.embedding_perturbation = (_token_perturbation(args, p)
+                                       if p['site'] == 'embedding' else None)
         self.blocks = nn.ModuleList([SLSRecBlock(args) for _ in range(args.bert_num_blocks)])
         self.use_item_bias = args.use_item_bias
         if self.use_item_bias:
@@ -330,6 +360,8 @@ class SLSRecModel(nn.Module):
 
     def encode(self, seqs, perturb=False):
         x, mask = self.embedding(seqs)
+        if self.embedding_perturbation is not None:              # --perturbation_site=embedding
+            x = self.embedding_perturbation(x, mask, perturb=perturb)
         for block in self.blocks:
             x = block(x, mask, perturb=perturb)
         return x, mask
