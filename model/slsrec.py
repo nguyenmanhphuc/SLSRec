@@ -35,6 +35,7 @@ import torch.nn.functional as F
 from .adaptive_gate import AdaptiveGate, FusionGate, gate_statistics
 from .bdlru import BDLRU, CausalDepthwiseConv1d, TokenPerturbation
 from .entmax import entmax_bisect
+from .kan import KANFusion
 
 
 def _perturbation_options(args):
@@ -194,7 +195,12 @@ class SGLRULayer(nn.Module):
 
         self.fusion_mode = getattr(args, 'fusion_mode', 'mul')
         self.fusion_gate = None
-        if self.fusion_mode != 'mul':
+        if self.fusion_mode in KANFusion.MODES:                  # KAN fusion (extension)
+            self.fusion_gate = KANFusion(self.fusion_mode, d,
+                                         grid_size=getattr(args, 'kan_grid', 5),
+                                         spline_order=getattr(args, 'kan_order', 3),
+                                         hidden=getattr(args, 'kan_hidden', 0))
+        elif self.fusion_mode != 'mul':
             self.fusion_gate = FusionGate(
                 getattr(args, 'fusion_source', 'token'), d_in=D, d=d,
                 granularity=getattr(args, 'gate_granularity', 'channel'),
@@ -250,7 +256,10 @@ class SGLRULayer(nn.Module):
         if self.use_bdlru:
             h = self.bdlru(h, mask, perturb=perturb and self.perturbation_site == 'bdlru')  # (5)
 
-        fused = self.fusion_gate(x, g, h) if self.fusion_gate is not None else g * h
+        if isinstance(self.fusion_gate, KANFusion):
+            fused = self.fusion_gate(x, g, h, mask)
+        else:
+            fused = self.fusion_gate(x, g, h) if self.fusion_gate is not None else g * h
         l3 = self.w3(fused)                                                    # (6)
         return self.layer_norm(self.dropout(l3) + x)                           # (7)
 
@@ -367,6 +376,10 @@ class SLSRecModel(nn.Module):
             if args.use_uncertainty else None
         )
         self.truncated_normal_init()
+        # the global init above also overwrites the KAN splines; give them their own back
+        for module in self.modules():
+            if isinstance(module, KANFusion):
+                module.reset_parameters()
         if getattr(args, 'gate_neutral_init', True):
             self.reset_gates_neutral()
 

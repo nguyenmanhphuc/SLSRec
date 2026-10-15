@@ -312,8 +312,13 @@ parser.add_argument('--gate_mode', type=str, default='sum',
                     help="sum = original eq.(3); scalar/channel = learned but static; "
                          "token/context = input-dependent adaptive gate")
 # axis B: how strongly G gates H  (replaces eq. 6)
-parser.add_argument('--fusion_mode', type=str, default='mul', choices=['mul', 'adaptive'],
-                    help="mul = original eq.(6) G*H; adaptive = (1 + a*(G-1))*H")
+parser.add_argument('--fusion_mode', type=str, default='mul', choices=['mul', 'adaptive', 'kan', 'kan_res'],
+                    help="mul = original eq.(6) G*H; adaptive = (1 + a*(G-1))*H; "
+                         "kan = two-layer KAN on [G;H] replacing the product; "
+                         "kan_res = G*H + one zero-initialised KAN layer on [G;H] (starts as eq. 6)")
+parser.add_argument('--kan_grid', type=int, default=5, help='B-spline grid intervals per KAN edge')
+parser.add_argument('--kan_order', type=int, default=3, help='B-spline order (3 = cubic)')
+parser.add_argument('--kan_hidden', type=int, default=0, help='hidden width of fusion_mode=kan (0 = d)')
 parser.add_argument('--fusion_source', type=str, default='token', choices=['token', 'context'])
 parser.add_argument('--gate_granularity', type=str, default='channel', choices=['scalar', 'channel'],
                     help='one coefficient per position, or per position and channel')

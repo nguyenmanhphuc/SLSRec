@@ -25,7 +25,15 @@ def find(name):
         d = os.path.join(ROOT, 'experiments', sub, name)
         if os.path.isdir(d):
             return d
-    return None
+    # fall back to any copy nested deeper (e.g. experiments/slsrec/slsrec/<name>); newest wins
+    hits = []
+    for base, dirs, _ in os.walk(os.path.join(ROOT, 'experiments')):
+        if base.count(os.sep) - ROOT.count(os.sep) > 4:
+            dirs[:] = []
+            continue
+        if name in dirs and os.path.exists(os.path.join(base, name, 'run_config.json')):
+            hits.append(os.path.join(base, name))
+    return max(hits, key=os.path.getmtime) if hits else None
 
 
 def load(name, plateau_from):
