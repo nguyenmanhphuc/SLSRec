@@ -1,7 +1,7 @@
 {
     "exp_name": "noP_d06_entmax15_beauty_seed42",
     "export_root": "experiments/slsrec/noP_d06_entmax15_beauty_seed42",
-    "started_at": "2026-10-12T09:26:47",
+    "started_at": "2026-10-12T08:00:37",
     "argv": [
         "train.py",
         "--dataset_code=beauty",
@@ -126,10 +126,10 @@
         "git_commit": "5c0da8e-dirty",
         "ref_lrurec_commit": null,
         "python": "3.10.12",
-        "torch": "2.1.0+cu118",
-        "cuda": "11.8",
-        "gpu": "NVIDIA RTX 4000 Ada Generation",
+        "torch": "2.2.0+cu121",
+        "cuda": "12.1",
+        "gpu": "Tesla V100-PCIE-16GB",
         "device": "cuda",
-        "hostname": "b6492cd41eac"
+        "hostname": "a2d7fa1d3217"
     }
 }
