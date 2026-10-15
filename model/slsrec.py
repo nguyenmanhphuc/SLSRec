@@ -36,6 +36,7 @@ from .adaptive_gate import AdaptiveGate, FusionGate, gate_statistics
 from .bdlru import BDLRU, CausalDepthwiseConv1d, TokenPerturbation
 from .entmax import entmax_bisect
 from .kan import KANFusion
+from .kaptrec import AdaptivePerturbation, HistoryUncertainty
 
 
 def _perturbation_options(args):
@@ -223,6 +224,7 @@ class SGLRULayer(nn.Module):
                 perturb_low=args.perturbation_low, perturb_high=args.perturbation_high,
                 perturb_noise=p['noise'], perturb_granularity=p['granularity'],
                 perturb_gates=p['gates'],
+                transition=getattr(args, 'bdlru_transition', False),
             )
 
         # eq. (7).  --sglru_dropout overrides the shared rate here only: LRURec, which
@@ -256,6 +258,7 @@ class SGLRULayer(nn.Module):
         if self.use_bdlru:
             h = self.bdlru(h, mask, perturb=perturb and self.perturbation_site == 'bdlru')  # (5)
 
+        self.last_g, self.last_h = g, h          # read by the KAPTRec controller / uncertainty
         if isinstance(self.fusion_gate, KANFusion):
             fused = self.fusion_gate(x, g, h, mask)
         else:
@@ -375,6 +378,18 @@ class SLSRecModel(nn.Module):
                                  pffn_bias=getattr(args, 'pffn_bias', False))
             if args.use_uncertainty else None
         )
+        # --- KAPTRec C3 (extension): adaptive perturbation + history-aware uncertainty --- #
+        d = int(D * args.slsrec_expand)
+        self.kap = (AdaptivePerturbation(D, pi_max=getattr(args, 'kap_pi_max', 0.3),
+                                         eps_min=getattr(args, 'kap_eps_min', 0.05),
+                                         eps_max=getattr(args, 'kap_eps_max', 0.5),
+                                         rho=getattr(args, 'kap_rho', 0.5),
+                                         tau=getattr(args, 'kap_tau', 0.5),
+                                         controller=getattr(args, 'kap_controller', 'adv'))
+                    if getattr(args, 'kap_perturb', False) else None)
+        self.kap_uncertainty = (HistoryUncertainty(D, d)
+                                if getattr(args, 'kap_uncertainty', False) else None)
+        self.last_emb = None
         self.truncated_normal_init()
         # the global init above also overwrites the KAN splines; give them their own back
         for module in self.modules():
@@ -405,8 +420,11 @@ class SLSRecModel(nn.Module):
                 p.mul_(std * math.sqrt(2.))
                 p.add_(mean)
 
-    def encode(self, seqs, perturb=False):
+    def encode(self, seqs, perturb=False, emb_delta=None):
         x, mask = self.embedding(seqs)
+        self.last_emb = x                                        # clean X^(0), for KAPTRec C3
+        if emb_delta is not None:                                # KAPTRec C3 perturbed view
+            x = x + emb_delta * mask.unsqueeze(-1).to(x.dtype)
         if self.embedding_perturbation is not None:              # --perturbation_site=embedding
             x = self.embedding_perturbation(x, mask, perturb=perturb)
         for block in self.blocks:
@@ -422,7 +440,13 @@ class SLSRecModel(nn.Module):
     def forward(self, seqs, perturb=False):
         """seqs: [B, L] -> logits [B, L, |I|+1] for every position."""
         x, _ = self.encode(seqs, perturb=perturb)
+        self.last_hidden = x                                     # Z, for KAPTRec C3
         return self.logits_from_hidden(x)
+
+    def clean_pass_state(self):
+        """What the last forward left behind: X^(0), Z, and G, H of the last layer."""
+        blk = self.blocks[-1].sg_lru
+        return {'x0': self.last_emb, 'z': self.last_hidden, 'g': blk.last_g, 'h': blk.last_h}
 
     def log_variance(self, seqs, labels):
         """Log(sigma_u^2) per position -- eq. (20).  [B, L]."""

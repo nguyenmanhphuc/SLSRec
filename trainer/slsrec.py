@@ -41,6 +41,7 @@ def slsrec_losses(args, model, seqs, labels, training=True):
     valid = (labels != 0).float()
 
     logits = model(seqs)[0]                                              # eq. (15)
+    clean = model.model.clean_pass_state() if getattr(args, 'kap_perturb', False) else None
     rec_per_pos = _ce_per_position(logits, labels)                       # eq. (16)
     l_rec = _masked_mean(rec_per_pos, valid)
 
@@ -71,7 +72,54 @@ def slsrec_losses(args, model, seqs, labels, training=True):
         l_unc = torch.zeros((), device=logits.device)
 
     l_total = l_rec + args.perturbation_weight * l_per + args.uncertainty_alpha * l_unc  # eq. (23)
-    return {'L_rec': l_rec, 'L_perturb': l_per, 'L_uncertainty': l_unc, 'L_total': l_total}
+    out = {'L_rec': l_rec, 'L_perturb': l_per, 'L_uncertainty': l_unc}
+    if training and getattr(args, 'kap_perturb', False):
+        kap_losses = _kaptrec_losses(args, model, seqs, labels, logits, rec_per_pos, valid, clean)
+        l_total = l_total + kap_losses.pop('kap_total')
+        out.update(kap_losses)
+    out['L_total'] = l_total
+    return out
+
+
+def _kaptrec_losses(args, model, seqs, labels, logits, rec_per_pos, valid, clean):
+    """KAPTRec C3 (extension):  lambda_p L_rec^pert + lambda_c omega_u JS(p_clean || p_pert)
+    + alpha_u L_unc + budget.  ``clean`` is the state of the clean pass slsrec_losses ran."""
+    inner = model.model
+    mask = seqs > 0
+    z, g, h = clean['z'], clean['g'], clean['h']
+    label_emb = inner.embedding.token(labels)
+    delta, pi = inner.kap(clean['x0'], z, g, h, label_emb, mask)
+
+    logits_p = inner.logits_from_hidden(inner.encode(seqs, emb_delta=delta)[0])
+    l_pert = _masked_mean(_ce_per_position(logits_p, labels), valid)
+
+    # per-sequence weights omega_u from the history-aware uncertainty (1 if off)
+    B = seqs.size(0)
+    omega = torch.ones(B, device=seqs.device)
+    l_unc = torch.zeros((), device=seqs.device)
+    if inner.kap_uncertainty is not None:
+        e_y = inner.embedding.token(labels[:, -1])          # target of the last (real) position
+        sigma = inner.kap_uncertainty(z, g, h, e_y, mask)
+        ce_last = rec_per_pos[:, -1]
+        l_unc = (ce_last / (2 * sigma ** 2) + torch.log(sigma)).mean()
+        w = 1.0 / sigma.detach() ** 2
+        omega = w / w.mean()
+
+    # Jensen-Shannon between the clean and perturbed next-item distributions, valid rows only
+    rows = valid.bool()
+    lp = F.log_softmax(logits[rows], dim=-1)
+    lq = F.log_softmax(logits_p[rows], dim=-1)
+    lm = torch.logsumexp(torch.stack([lp, lq]), dim=0) - torch.log(torch.tensor(2.0, device=lp.device))
+    js = 0.5 * ((lp.exp() * (lp - lm)).sum(-1) + (lq.exp() * (lq - lm)).sum(-1))
+    w_rows = omega.unsqueeze(1).expand_as(valid)[rows]
+    l_js = (w_rows * js).mean()
+
+    pi_mean = (pi.squeeze(-1) * mask).sum() / mask.sum().clamp_min(1)
+    l_budget = (pi_mean - getattr(args, 'kap_pi_target', 0.1)) ** 2
+    total = (getattr(args, 'kap_lambda_p', 1.0) * l_pert + getattr(args, 'kap_lambda_c', 1.0) * l_js
+             + getattr(args, 'kap_unc_alpha', 0.1) * l_unc + getattr(args, 'kap_budget_weight', 10.0) * l_budget)
+    return {'L_kap_pert': l_pert, 'L_kap_js': l_js, 'L_kap_unc': l_unc, 'L_kap_budget': l_budget,
+            'kap_pi_mean': pi_mean.detach(), 'kap_total': total}
 
 
 class SLSRecTrainer(BaseTrainer):

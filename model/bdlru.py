@@ -207,7 +207,7 @@ class BDLRU(nn.Module):
                  lambda_init='linspace', scan_impl='torch',
                  perturb_prob=0.1, perturb_low=0.0, perturb_high=1.0,
                  perturb_noise='uniform', perturb_granularity='position',
-                 perturb_gates='perturbed'):
+                 perturb_gates='perturbed', transition=False):
         super().__init__()
         self.d_model = d_model
         self.c = c
@@ -223,6 +223,14 @@ class BDLRU(nn.Module):
 
         # r_t and i_t from a single fused linear (equivalent to W4/b4, W5/b5)
         self.gates = nn.Linear(d_model, 2 * d_model, bias=True)
+
+        # KAPTRec C2 (extension, not in SLSRec): transition-aware recurrence gate,
+        # r_t = sigmoid(MLP([x_{t-1}, x_t, x_t - x_{t-1}, x_{t-1} (*) x_t])); i_t stays
+        # input-dependent as in eq. (10).  x_{t-1} of the first real step is 0.
+        self.transition = transition
+        if transition:
+            self.transition_gate = nn.Sequential(
+                nn.Linear(4 * d_model, d_model), nn.GELU(), nn.Linear(d_model, d_model))
 
         # lambda such that, with r_t == 1, a_t = exp(c*log(sigmoid(lambda)))
         # is spread over [r_min, r_max]  ->  lambda = logit(a^(1/c))
@@ -252,6 +260,10 @@ class BDLRU(nn.Module):
             self.last_perturb_mask = None
 
         recurrence, inp = self.gates(gate_x).chunk(2, dim=-1)  # eq. (9), (10)
+        if self.transition:
+            cur = gate_x if mask is None else gate_x * mask.unsqueeze(-1).to(gate_x.dtype)
+            prev = F.pad(cur[:, :-1], (0, 0, 1, 0))           # x_{t-1}; 0 before the first step
+            recurrence = self.transition_gate(torch.cat([prev, cur, cur - prev, prev * cur], dim=-1))
         r_t, i_t = torch.sigmoid(recurrence), torch.sigmoid(inp)
 
         log_sigmoid_lambda = F.logsigmoid(self.Lambda)         # <= 0  -> a_t in (0, 1]

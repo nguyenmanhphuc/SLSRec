@@ -312,10 +312,33 @@ parser.add_argument('--gate_mode', type=str, default='sum',
                     help="sum = original eq.(3); scalar/channel = learned but static; "
                          "token/context = input-dependent adaptive gate")
 # axis B: how strongly G gates H  (replaces eq. 6)
-parser.add_argument('--fusion_mode', type=str, default='mul', choices=['mul', 'adaptive', 'kan', 'kan_res'],
+parser.add_argument('--fusion_mode', type=str, default='mul',
+                    choices=['mul', 'adaptive', 'kan', 'kan_res', 'kan_gate', 'mlp_gate'],
                     help="mul = original eq.(6) G*H; adaptive = (1 + a*(G-1))*H; "
                          "kan = two-layer KAN on [G;H] replacing the product; "
-                         "kan_res = G*H + one zero-initialised KAN layer on [G;H] (starts as eq. 6)")
+                         "kan_res = G*H + one zero-initialised KAN layer on [G;H] (starts as eq. 6); "
+                         "kan_gate = KAPTRec C1, o = sigmoid(KAN(LN[G;H])), F = o*H + (1-o)*G; "
+                         "mlp_gate = the same branch selection with a two-layer MLP (efficiency ablation)")
+# --- KAPTRec (research extension, not in SLSRec) --- #
+parser.add_argument('--bdlru_transition', type=str2bool, default=False,
+                    help='C2: r_t = sigmoid(MLP([x_{t-1}, x_t, x_t - x_{t-1}, x_{t-1}*x_t]))')
+parser.add_argument('--kap_perturb', type=str2bool, default=False,
+                    help='C3: context-guided adaptive perturbation of the input embeddings + JS consistency')
+parser.add_argument('--kap_controller', type=str, default='adv', choices=['adv', 'min'],
+                    help='adv = the controller maximises the perturbed loss (gradient reversal); '
+                         'min = it minimises it like the encoder (expected to collapse to harmless noise)')
+parser.add_argument('--kap_pi_max', type=float, default=0.3)
+parser.add_argument('--kap_pi_target', type=float, default=0.1, help='budget for mean(pi_t)')
+parser.add_argument('--kap_budget_weight', type=float, default=10.0)
+parser.add_argument('--kap_eps_min', type=float, default=0.05, help='relative to ||x_t||')
+parser.add_argument('--kap_eps_max', type=float, default=0.5, help='relative to ||x_t||')
+parser.add_argument('--kap_rho', type=float, default=0.5, help='share of the random direction')
+parser.add_argument('--kap_tau', type=float, default=0.5, help='Gumbel-sigmoid temperature')
+parser.add_argument('--kap_lambda_p', type=float, default=1.0, help='weight of L_rec on the perturbed view')
+parser.add_argument('--kap_lambda_c', type=float, default=1.0, help='weight of the JS consistency')
+parser.add_argument('--kap_uncertainty', type=str2bool, default=False,
+                    help='history-aware sigma_u: weights the JS term by omega_u and adds L_unc')
+parser.add_argument('--kap_unc_alpha', type=float, default=0.1)
 parser.add_argument('--kan_grid', type=int, default=5, help='B-spline grid intervals per KAN edge')
 parser.add_argument('--kan_order', type=int, default=3, help='B-spline order (3 = cubic)')
 parser.add_argument('--kan_hidden', type=int, default=0, help='hidden width of fusion_mode=kan (0 = d)')

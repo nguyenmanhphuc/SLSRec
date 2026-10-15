@@ -67,38 +67,62 @@ class KANLinear(nn.Module):
 
 
 class KANFusion(nn.Module):
-    MODES = ('kan', 'kan_res')
+    """Fusion of G and H.  'kan' / 'kan_res' replace or correct the product;
+    'kan_gate' / 'mlp_gate' are KAPTRec C1, a learned *branch selection*:
+
+        o = sigmoid(f(LN([G; H]))),   F = o (*) H + (1 - o) (*) G
+
+    with f a single KAN layer 2d -> d (kan_gate) or a two-layer MLP (mlp_gate, the
+    efficiency ablation).  f starts at zero, i.e. o = 0.5 and F = (G + H) / 2.
+    """
+
+    MODES = ('kan', 'kan_res', 'kan_gate', 'mlp_gate')
 
     def __init__(self, mode, d, grid_size=5, spline_order=3, hidden=0):
         super().__init__()
         if mode not in self.MODES:
             raise ValueError(f'unknown KAN fusion mode: {mode}')
         self.mode = mode
+        self.last_o = None  # exposed for logging (gate modes)
         # named layer_norm so the model's global truncated-normal init leaves it alone
         self.layer_norm = nn.LayerNorm(2 * d)
         if mode == 'kan':
             hid = hidden or d
             self.layers = nn.ModuleList([KANLinear(2 * d, hid, grid_size, spline_order),
                                          KANLinear(hid, d, grid_size, spline_order)])
-        else:
+        elif mode == 'mlp_gate':
+            hid = hidden or d
+            self.layers = nn.ModuleList([nn.Linear(2 * d, hid), nn.GELU(), nn.Linear(hid, d)])
+        else:  # kan_res, kan_gate
             self.layers = nn.ModuleList([KANLinear(2 * d, d, grid_size, spline_order)])
         self.reset_parameters()
 
     @torch.no_grad()
     def reset_parameters(self):
         """Called again by the model after its global init, which would overwrite
-        the KAN weights.  kan_res starts at exactly G (*) H."""
+        these weights.  kan_res starts at exactly G (*) H; the gate modes at o = 0.5."""
         self.layer_norm.reset_parameters()
         for layer in self.layers:
-            layer.reset_parameters()
-        if self.mode == 'kan_res':
+            if hasattr(layer, 'reset_parameters'):
+                layer.reset_parameters()
+        if self.mode in ('kan_res', 'kan_gate'):
             self.layers[-1].zero_()
+        elif self.mode == 'mlp_gate':
+            self.layers[-1].weight.zero_()
+            self.layers[-1].bias.zero_()
 
     def forward(self, x, gate, h, mask=None):
         z = self.layer_norm(torch.cat([gate, h], dim=-1))
-        for i, layer in enumerate(self.layers):
+        for layer in self.layers:
             z = layer(z)
-        out = gate * h + z if self.mode == 'kan_res' else z
+        if self.mode == 'kan_res':
+            out = gate * h + z
+        elif self.mode in ('kan_gate', 'mlp_gate'):
+            o = torch.sigmoid(z)
+            self.last_o = o.detach()
+            out = o * h + (1.0 - o) * gate
+        else:
+            out = z
         if mask is not None:
             out = out * mask.unsqueeze(-1).to(out.dtype)
         return out
