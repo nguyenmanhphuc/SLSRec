@@ -339,6 +339,11 @@ parser.add_argument('--kap_lambda_c', type=float, default=1.0, help='weight of t
 parser.add_argument('--kap_uncertainty', type=str2bool, default=False,
                     help='history-aware sigma_u: weights the JS term by omega_u and adds L_unc')
 parser.add_argument('--kap_unc_alpha', type=float, default=0.1)
+# --- FiCoRec Dual Aggregation (research extension, not in SLSRec) --- #
+parser.add_argument('--dual_agg', type=str2bool, default=False,
+                    help='FiCoRec Sec. 4.3: gated Tail + Global aggregation of the encoder output, '
+                         'made causal so every position pools only itself and the past')
+parser.add_argument('--dual_agg_k', type=int, default=5, help='Tail Aggregation window K (FiCoRec: 1-9)')
 parser.add_argument('--kan_grid', type=int, default=5, help='B-spline grid intervals per KAN edge')
 parser.add_argument('--kan_order', type=int, default=3, help='B-spline order (3 = cubic)')
 parser.add_argument('--kan_hidden', type=int, default=0, help='hidden width of fusion_mode=kan (0 = d)')

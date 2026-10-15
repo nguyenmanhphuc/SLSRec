@@ -90,7 +90,7 @@ def _kaptrec_losses(args, model, seqs, labels, logits, rec_per_pos, valid, clean
     label_emb = inner.embedding.token(labels)
     delta, pi = inner.kap(clean['x0'], z, g, h, label_emb, mask)
 
-    logits_p = inner.logits_from_hidden(inner.encode(seqs, emb_delta=delta)[0])
+    logits_p = inner.logits_from_hidden(inner.represent(seqs, emb_delta=delta))
     l_pert = _masked_mean(_ce_per_position(logits_p, labels), valid)
 
     # per-sequence weights omega_u from the history-aware uncertainty (1 if off)

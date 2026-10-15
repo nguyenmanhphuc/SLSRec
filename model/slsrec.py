@@ -37,6 +37,7 @@ from .bdlru import BDLRU, CausalDepthwiseConv1d, TokenPerturbation
 from .entmax import entmax_bisect
 from .kan import KANFusion
 from .kaptrec import AdaptivePerturbation, HistoryUncertainty
+from .dual_aggregation import DualAggregation
 
 
 def _perturbation_options(args):
@@ -389,6 +390,9 @@ class SLSRecModel(nn.Module):
                     if getattr(args, 'kap_perturb', False) else None)
         self.kap_uncertainty = (HistoryUncertainty(D, d)
                                 if getattr(args, 'kap_uncertainty', False) else None)
+        # --- FiCoRec Dual Aggregation (extension, causal per position) --- #
+        self.dual_agg = (DualAggregation(D, K=getattr(args, 'dual_agg_k', 5))
+                         if getattr(args, 'dual_agg', False) else None)
         self.last_emb = None
         self.truncated_normal_init()
         # the global init above also overwrites the KAN splines; give them their own back
@@ -437,9 +441,16 @@ class SLSRecModel(nn.Module):
             scores = scores + self.bias
         return scores
 
+    def represent(self, seqs, perturb=False, emb_delta=None):
+        """Encoder output, then (optionally) FiCoRec's Dual Aggregation.  [B, L, D]."""
+        x, mask = self.encode(seqs, perturb=perturb, emb_delta=emb_delta)
+        if self.dual_agg is not None:
+            x = self.dual_agg(x, mask)
+        return x
+
     def forward(self, seqs, perturb=False):
         """seqs: [B, L] -> logits [B, L, |I|+1] for every position."""
-        x, _ = self.encode(seqs, perturb=perturb)
+        x = self.represent(seqs, perturb=perturb)
         self.last_hidden = x                                     # Z, for KAPTRec C3
         return self.logits_from_hidden(x)
 

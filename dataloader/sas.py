@@ -7,8 +7,10 @@ import torch.utils.data as data_utils
 
 
 def worker_init_fn(worker_id):
-    random.seed(np.random.get_state()[1][0] + worker_id)                                                      
-    np.random.seed(np.random.get_state()[1][0] + worker_id)
+    # int(): np.uint32 is rejected by random.seed on Python >= 3.11
+    seed = (int(np.random.get_state()[1][0]) + worker_id) % 2**32
+    random.seed(seed)
+    np.random.seed(seed)
 
 
 class SASDataloader():
